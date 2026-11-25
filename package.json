@@ -11,7 +11,7 @@
 		"dev": "pnpm --filter @studio/web dev",
 		"build": "pnpm --filter @studio/web build",
 		"format": "biome format --write .",
-		"check": "biome check . && tsc --noEmit",
+		"check": "biome check . && tsc --noEmit && tsc -p apps/web/tsconfig.json",
 		"test": "vp test run",
 		"db:generate": "pnpm --filter @studio/server db:generate",
 		"db:migrate": "docker compose run --rm migrate",

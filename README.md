@@ -55,5 +55,27 @@ job and prints the request ID for matching the app and worker logs.
 `docker compose logs app worker migrate storage` shows service diagnostics.
 `docker compose down` stops the stack and retains both named volumes.
 
+## Web design system
+
+Tailwind CSS v4 runs through the Vite plugin in `apps/web`. Its CSS-first
+configuration and the supplied PwC-inspired light and dark tokens live in
+`apps/web/src/globals.css`. Light is the default. The status page switches themes
+by setting the `.dark` class on the root element, so portaled overlays inherit it.
+
+`apps/web/components.json` configures shadcn Base Nova with Base UI primitives,
+Neutral as the registry base, Lucide icons, and solid menus with a subtle accent.
+Generated components live in `apps/web/src/components/ui`. Status badges have
+`success`, `warning`, `info`, `error`, and `muted` variants.
+
+Use the pinned CLI from the web workspace:
+
+```sh
+pnpm --filter @studio/web ui add <component>
+pnpm --filter @studio/web ui add <component> --diff
+```
+
+Review registry updates before replacing files with local interaction or theme
+changes.
+
 See the [implementation roadmap](docs/requirements-roadmap.md) for the remaining
 Slice 1 deployment checks and the staff access slice.
