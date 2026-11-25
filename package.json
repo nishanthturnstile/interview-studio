@@ -1,0 +1,29 @@
+{
+	"name": "interview-studio",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@12.23.0",
+	"engines": {
+		"node": "26.13.1"
+	},
+	"scripts": {
+		"local:init": "node scripts/local-init.mjs",
+		"dev": "pnpm --filter @studio/web dev",
+		"build": "pnpm --filter @studio/web build",
+		"format": "biome format --write .",
+		"check": "biome check . && tsc --noEmit",
+		"test": "vp test run",
+		"db:generate": "pnpm --filter @studio/server db:generate",
+		"db:migrate": "docker compose run --rm migrate",
+		"db:seed": "docker compose exec app node apps/server/src/seed.ts",
+		"smoke": "docker compose exec app node apps/server/src/smoke.ts",
+		"test:browser": "playwright test"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.6.9",
+		"@playwright/test": "1.65.1",
+		"@types/node": "26.6.10",
+		"typescript": "7.0.2",
+		"vite-plus": "1.8.0"
+	}
+}

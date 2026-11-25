@@ -1,0 +1,123 @@
+name: interview-studio
+
+x-server: &server
+  image: interview-studio:local
+  pull_policy: never
+  environment: &database-env
+    DATABASE_URL: postgresql://studio:${STUDIO_DB_PASSWORD:?Run pnpm local:init}@db:5432/studio
+
+x-storage-env: &storage-env
+  STUDIO_S3_ENDPOINT: http://storage:8333
+  STUDIO_BUCKET: ${STUDIO_BUCKET:-studio-private}
+
+services:
+  db:
+    image: postgres:19.0@sha256:aaa10f7ba7328b4a221a6c3184d83eef885bd16bf1f6de864757863156b0a4d1
+    environment:
+      POSTGRES_USER: studio
+      POSTGRES_DB: studio
+      POSTGRES_PASSWORD: ${STUDIO_DB_PASSWORD:?Run pnpm local:init}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "studio", "-d", "studio"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  storage:
+    image: chrislusf/seaweedfs:4.55@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
+    command:
+      - mini
+      - -dir=/data
+      - -bucket=${STUDIO_BUCKET:-studio-private}
+      - -s3.config=/etc/seaweedfs/studio-s3.json
+      - -s3.autoCreateBucket=false
+      - -s3.iam=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -admin.ui=false
+      - -webdav=false
+      - -master.telemetry=false
+    configs:
+      - source: s3-identities
+        target: /etc/seaweedfs/studio-s3.json
+    volumes:
+      - storage-data:/data
+
+  migrate:
+    <<: *server
+    command: ["node", "apps/server/src/migrate.ts"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    <<: *server
+    build: .
+    command: ["node", "apps/server/src/main.ts"]
+    environment:
+      <<: [*database-env, *storage-env]
+      STUDIO_S3_KEY: ${STUDIO_APP_S3_KEY:?Run pnpm local:init}
+      STUDIO_S3_SECRET: ${STUDIO_APP_S3_SECRET:?Run pnpm local:init}
+      STUDIO_INTERNAL_ORIGIN: http://127.0.0.1:3000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      storage:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${STUDIO_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r => { if (!r.ok) process.exitCode = 1 }).catch(() => { process.exitCode = 1 })",
+        ]
+      interval: 3s
+      timeout: 4s
+      retries: 20
+
+  worker:
+    <<: *server
+    command: ["node", "apps/server/src/worker.ts"]
+    environment:
+      <<: [*database-env, *storage-env]
+      STUDIO_S3_KEY: ${STUDIO_WORKER_S3_KEY:?Run pnpm local:init}
+      STUDIO_S3_SECRET: ${STUDIO_WORKER_S3_SECRET:?Run pnpm local:init}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      storage:
+        condition: service_started
+
+configs:
+  s3-identities:
+    content: |
+      {
+        "identities": [
+          {
+            "name": "studio-app",
+            "credentials": [{
+              "accessKey": "${STUDIO_APP_S3_KEY:?Run pnpm local:init}",
+              "secretKey": "${STUDIO_APP_S3_SECRET:?Run pnpm local:init}"
+            }],
+            "actions": ["Read:${STUDIO_BUCKET:-studio-private}", "Write:${STUDIO_BUCKET:-studio-private}", "List:${STUDIO_BUCKET:-studio-private}"]
+          },
+          {
+            "name": "studio-worker",
+            "credentials": [{
+              "accessKey": "${STUDIO_WORKER_S3_KEY:?Run pnpm local:init}",
+              "secretKey": "${STUDIO_WORKER_S3_SECRET:?Run pnpm local:init}"
+            }],
+            "actions": ["Read:${STUDIO_BUCKET:-studio-private}"]
+          }
+        ]
+      }
+
+volumes:
+  db-data:
+  storage-data:

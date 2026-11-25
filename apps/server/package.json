@@ -1,0 +1,23 @@
+{
+	"name": "@studio/server",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"db:generate": "drizzle-kit generate"
+	},
+	"dependencies": {
+		"@aws-sdk/client-s3": "3.1177.0",
+		"@hono/node-server": "2.1.11",
+		"@studio/contracts": "workspace:*",
+		"drizzle-orm": "0.45.4",
+		"hono": "4.13.22",
+		"pg": "8.23.1",
+		"pg-boss": "12.39.0",
+		"pino": "10.4.0",
+		"zod": "4.6.7"
+	},
+	"devDependencies": {
+		"@types/pg": "8.23.1",
+		"drizzle-kit": "0.31.11"
+	}
+}
