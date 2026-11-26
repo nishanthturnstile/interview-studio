@@ -55,6 +55,35 @@ job and prints the request ID for matching the app and worker logs.
 `docker compose logs app worker migrate storage` shows service diagnostics.
 `docker compose down` stops the stack and retains both named volumes.
 
+## Local staff access
+
+Run `pnpm local:init` and rebuild the Compose stack when upgrading from Slice 1.
+The initializer adds missing staff settings to the existing `.env` while
+keeping the credentials for both named volumes.
+
+Open [Staff sign in](http://127.0.0.1:3000/sign-in). Register
+`director@studio.test`, then open [Mailpit](http://127.0.0.1:8025), follow
+the verification link, choose **Verify email**, and sign in. Register and verify a second synthetic
+`@studio.test` account to test grants from **Manage staff access**.
+`STUDIO_STAFF_DOMAINS` and `STUDIO_DIRECTOR_EMAIL` configure the approved
+addresses. The first director claim stays with the database after it is made.
+
+For the full browser test, use a fresh Compose project so the director can
+register at the start of the test.
+
+```sh
+export STUDIO_PORT=13000 STUDIO_MAILPIT_PORT=18025
+export STUDIO_STAFF_DOMAINS=studio.test STUDIO_DIRECTOR_EMAIL=director@studio.test
+docker compose -p studio-staff-test up -d --build --wait
+STUDIO_BASE_URL=http://127.0.0.1:13000 STUDIO_TEST_MAILPIT_URL=http://127.0.0.1:18025 pnpm test:browser
+docker compose -p studio-staff-test down --volumes
+unset STUDIO_PORT STUDIO_MAILPIT_PORT STUDIO_STAFF_DOMAINS STUDIO_DIRECTOR_EMAIL
+```
+
+Set `STUDIO_TEST_DATABASE_URL` to a fresh test PostgreSQL database to include
+the transactional role tests in `pnpm test`. The test suite applies migrations
+and creates synthetic rows in that database.
+
 ## Web design system
 
 Tailwind CSS v4 runs through the Vite plugin in `apps/web`. Its CSS-first
@@ -77,5 +106,5 @@ pnpm --filter @studio/web ui add <component> --diff
 Review registry updates before replacing files with local interaction or theme
 changes.
 
-See the [implementation roadmap](docs/requirements-roadmap.md) for the remaining
+See the [implementation roadmap](docs/core/requirements-roadmap.md) for the remaining
 Slice 1 deployment checks and the staff access slice.

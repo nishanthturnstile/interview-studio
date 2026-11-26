@@ -69,3 +69,40 @@ test("uses the design tokens in both themes and keeps focus visible", async ({
 		320,
 	);
 });
+
+test("keeps sign-in validation and password visibility usable at 320px", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 320, height: 720 });
+	await page.goto("/sign-in");
+
+	const email = page.getByLabel("Work email", { exact: true });
+	const password = page.getByLabel("Password", { exact: true });
+	const submit = page.getByRole("button", { name: "Sign in", exact: true });
+	await submit.click();
+	await expect(email).toBeFocused();
+	await expect(email).toHaveAttribute("aria-invalid", "true");
+	await expect(password).toHaveAttribute("type", "password");
+	await password.fill("synthetic-password");
+	await page.getByRole("button", { name: "Show password" }).click();
+	await expect(password).toHaveAttribute("type", "text");
+	await expect(password).toHaveValue("synthetic-password");
+	await page.getByRole("button", { name: "Hide password" }).press("Space");
+	await expect(password).toHaveAttribute("type", "password");
+	await expect(password).toHaveValue("synthetic-password");
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+		320,
+	);
+});
+
+test("opens the resend form from a verification link", async ({ page }) => {
+	await page.goto("/verify-email?token=example");
+	await expect(
+		page.getByRole("heading", { name: "Verify your work email" }),
+	).toBeVisible();
+	await page.getByRole("link", { name: "Request a new link" }).click();
+	await expect(
+		page.getByRole("heading", { name: "Check your inbox" }),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Resend link" })).toBeVisible();
+});

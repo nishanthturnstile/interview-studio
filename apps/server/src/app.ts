@@ -2,12 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { Health } from "@studio/contracts";
 import { Hono } from "hono";
 import type { Logger } from "pino";
+import { errorClass } from "./logger.ts";
+import type { staffRoutes } from "./staff/routes.ts";
 
 export function createApp(
 	checkHealth: () => Promise<Health["services"]>,
 	logger: Logger,
+	staff?: ReturnType<typeof staffRoutes>,
 ) {
 	const app = new Hono();
+	app.onError((error, c) => {
+		logger.error({ errorClass: errorClass(error) }, "HTTP request failed");
+		return c.json({ error: "internal_error" }, 500);
+	});
 	app.use("*", async (c, next) => {
 		const requestId = randomUUID();
 		const start = performance.now();
@@ -32,6 +39,7 @@ export function createApp(
 		const body: Health = { status: ready ? "ready" : "degraded", services };
 		return c.json(body, ready ? 200 : 503);
 	});
+	if (staff) app.route("/", staff);
 	app.all("/api/*", (c) => c.json({ error: "not_found" }, 404));
 
 	return app;
