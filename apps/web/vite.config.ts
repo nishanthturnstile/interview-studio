@@ -10,6 +10,9 @@ export default defineConfig({
 		host: "127.0.0.1",
 		port: 5173,
 		strictPort: true,
-		proxy: { "/api": process.env.STUDIO_API_ORIGIN ?? "http://127.0.0.1:3000" },
+		proxy: {
+			"/api": process.env.STUDIO_API_ORIGIN ?? "http://127.0.0.1:3000",
+			"/pdf-assets": process.env.STUDIO_API_ORIGIN ?? "http://127.0.0.1:3000",
+		},
 	},
 });

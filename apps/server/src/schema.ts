@@ -10,5 +10,6 @@ export const smokeFixture = pgTable("smoke_fixture", {
 	sha256: text().notNull(),
 });
 
+export * from "./drives/schema.ts";
 export * from "./staff/auth-schema.ts";
 export * from "./staff/role-schema.ts";

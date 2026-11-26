@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import type { db } from "../database.ts";
+import type { driveRoutes } from "../drives/routes.ts";
 import type { createStaffAuth } from "./auth.ts";
 import { getStaff, grantStaffRole, listStaff } from "./roles.ts";
 import type { StaffSettings } from "./settings.ts";
@@ -29,6 +30,7 @@ export function staffRoutes(
 	database: typeof db,
 	settings: StaffSettings,
 	auth: ReturnType<typeof createStaffAuth>,
+	drives?: ReturnType<typeof driveRoutes>,
 ) {
 	const app = new Hono<{ Variables: { staff: StaffIdentity } }>();
 	// This stack runs a single app process. Serialize sign-in with password resets
@@ -170,5 +172,6 @@ export function staffRoutes(
 			return c.json({ role: grant.data.role });
 		},
 	);
+	if (drives) app.route("/api/staff/drives", drives);
 	return app;
 }

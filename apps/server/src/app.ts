@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Health } from "@studio/contracts";
 import { Hono } from "hono";
 import type { Logger } from "pino";
+import { DriveProblem } from "./drives/errors.ts";
 import { errorClass } from "./logger.ts";
 import type { staffRoutes } from "./staff/routes.ts";
 
@@ -12,6 +13,10 @@ export function createApp(
 ) {
 	const app = new Hono();
 	app.onError((error, c) => {
+		if (error instanceof DriveProblem) {
+			if (error.retryAfter) c.header("Retry-After", String(error.retryAfter));
+			return c.json(error.body, error.status);
+		}
 		logger.error({ errorClass: errorClass(error) }, "HTTP request failed");
 		return c.json({ error: "internal_error" }, 500);
 	});

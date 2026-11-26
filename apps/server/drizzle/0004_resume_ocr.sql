@@ -1,0 +1,1 @@
+ALTER TABLE "drive_document" ADD COLUMN "used_ocr" boolean DEFAULT false NOT NULL;

@@ -1,8 +1,6 @@
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { FolderOpen } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { setDarkMode, useDarkMode } from "@/components/theme";
-import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -12,13 +10,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import {
-	Empty,
-	EmptyDescription,
-	EmptyHeader,
-	EmptyMedia,
-	EmptyTitle,
-} from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
 	Select,
@@ -28,7 +19,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { canViewDrives, roleName } from "./staff-display";
+import { roleName } from "./staff-display";
 
 const staffRoute = getRouteApi("/staff");
 
@@ -69,33 +60,6 @@ export function StaffDashboard() {
 					)}
 				</CardContent>
 			</Card>
-		</StaffSection>
-	);
-}
-
-export function StaffDrives() {
-	const role = staffRoute.useLoaderData({ select: (viewer) => viewer.role });
-	return (
-		<StaffSection title="Drives">
-			{canViewDrives(role) ? (
-				<Empty className="min-h-56 max-w-2xl border bg-card">
-					<EmptyHeader>
-						<EmptyMedia variant="icon">
-							<FolderOpen aria-hidden="true" />
-						</EmptyMedia>
-						<EmptyTitle>Interview drives</EmptyTitle>
-						<EmptyDescription>
-							{role === "hr"
-								? "You’ll be able to create and manage interview drives here in a later update."
-								: "Interview drives will appear here when the HR workspace is ready."}
-						</EmptyDescription>
-					</EmptyHeader>
-				</Empty>
-			) : (
-				<Alert variant="destructive" className="max-w-2xl">
-					<AlertTitle>Drives are available to HR and directors.</AlertTitle>
-				</Alert>
-			)}
 		</StaffSection>
 	);
 }

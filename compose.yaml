@@ -98,6 +98,7 @@ services:
 
   worker:
     <<: *server
+    mem_limit: 512m
     command: ["node", "apps/server/src/worker.ts"]
     environment:
       <<: [*database-env, *storage-env]

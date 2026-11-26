@@ -15,6 +15,27 @@
       "when": 1795659650992,
       "tag": "0001_staff_access",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795667847750,
+      "tag": "0002_drive_intake",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795670806177,
+      "tag": "0003_drive_description_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795673319284,
+      "tag": "0004_resume_ocr",
+      "breakpoints": true
     }
   ]
 }

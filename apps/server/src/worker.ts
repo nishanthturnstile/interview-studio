@@ -2,13 +2,15 @@ import { setTimeout } from "node:timers/promises";
 import { probeJobSchema } from "@studio/contracts";
 import { sql } from "drizzle-orm";
 import { db, pool } from "./database.ts";
+import { sweepStaging } from "./drives/staging.ts";
+import { processDocument, reconcileIntake } from "./drives/worker.ts";
 import { verifyFixture } from "./fixture.ts";
-import { createQueueClient, probeQueue } from "./jobs.ts";
+import { createQueueClient, intakeQueue, probeQueue } from "./jobs.ts";
 import { errorClass, logger } from "./logger.ts";
 import { workerHeartbeat } from "./schema.ts";
 import { s3 } from "./storage.ts";
 
-const boss = createQueueClient();
+const boss = createQueueClient({ supervise: true });
 const controller = new AbortController();
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
 	process.once(signal, () => controller.abort());
@@ -22,6 +24,12 @@ pool.on("error", (error) =>
 
 try {
 	await boss.start();
+	await sweepStaging();
+	await boss.work(
+		intakeQueue,
+		{ batchSize: 1, localConcurrency: 1 },
+		processDocument(db, controller.signal),
+	);
 	await boss.work(probeQueue, async ([job]) => {
 		const { requestId } = probeJobSchema.parse(job.data);
 		const log = logger.child({ requestId, jobId: job.id });
@@ -49,6 +57,14 @@ try {
 			logger.error(
 				{ errorClass: errorClass(error) },
 				"Worker heartbeat failed",
+			);
+		}
+		try {
+			await reconcileIntake(db, boss);
+		} catch (error) {
+			logger.warn(
+				{ errorClass: errorClass(error) },
+				"Intake reconciliation failed",
 			);
 		}
 		await setTimeout(3_000, undefined, { signal: controller.signal }).catch(

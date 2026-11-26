@@ -217,8 +217,16 @@ const drivesRoute = createRoute({
 	getParentRoute: () => staffRoute,
 	path: "drives",
 	component: lazyRouteComponent(
-		() => import("./staff/staff-pages.tsx"),
+		() => import("./drives/list.tsx"),
 		"StaffDrives",
+	),
+});
+const driveDetailRoute = createRoute({
+	getParentRoute: () => staffRoute,
+	path: "drives/$driveId",
+	component: lazyRouteComponent(
+		() => import("./drives/detail.tsx"),
+		"StaffDriveDetail",
 	),
 });
 const accountRoute = createRoute({
@@ -253,6 +261,7 @@ const router = createRouter({
 		staffRoute.addChildren([
 			dashboardRoute,
 			drivesRoute,
+			driveDetailRoute,
 			accountRoute,
 			settingsRoute,
 			accessRoute,

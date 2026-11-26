@@ -2,8 +2,14 @@
 
 ## Start on macOS
 
-Use mise and a running Docker Compose environment. With Colima, confirm
-`docker context show` reports `colima` before starting.
+If you use Colima, start it before running Docker Compose. Confirm that
+`docker context show` reports `colima`.
+
+```sh
+colima start
+```
+
+From the project root, install dependencies and start the stack.
 
 ```sh
 mise trust
@@ -68,21 +74,57 @@ the verification link, choose **Verify email**, and sign in. Register and verify
 `STUDIO_STAFF_DOMAINS` and `STUDIO_DIRECTOR_EMAIL` configure the approved
 addresses. The first director claim stays with the database after it is made.
 
+If this checkout has local test accounts, open
+[the local credentials file](.local/staff-test-accounts.md) for the L1 Panelist,
+L2 Panelist, HR, and Director logins. Git ignores this file.
+
 For the full browser test, use a fresh Compose project so the director can
 register at the start of the test.
 
 ```sh
-export STUDIO_PORT=13000 STUDIO_MAILPIT_PORT=18025
+export STUDIO_PORT=13000 STUDIO_MAILPIT_PORT=18025 STUDIO_AUTH_ORIGIN=http://127.0.0.1:13000
 export STUDIO_STAFF_DOMAINS=studio.test STUDIO_DIRECTOR_EMAIL=director@studio.test
 docker compose -p studio-staff-test up -d --build --wait
 STUDIO_BASE_URL=http://127.0.0.1:13000 STUDIO_TEST_MAILPIT_URL=http://127.0.0.1:18025 pnpm test:browser
 docker compose -p studio-staff-test down --volumes
-unset STUDIO_PORT STUDIO_MAILPIT_PORT STUDIO_STAFF_DOMAINS STUDIO_DIRECTOR_EMAIL
+unset STUDIO_PORT STUDIO_MAILPIT_PORT STUDIO_AUTH_ORIGIN STUDIO_STAFF_DOMAINS STUDIO_DIRECTOR_EMAIL
 ```
 
 Set `STUDIO_TEST_DATABASE_URL` to a fresh test PostgreSQL database to include
 the transactional role tests in `pnpm test`. The test suite applies migrations
 and creates synthetic rows in that database.
+
+## Local drive intake
+
+Rebuild the local stack with `docker compose up -d --build --wait`. An HR
+account can open [Drives](http://127.0.0.1:3000/staff/drives), create a drive,
+and upload a job description and resumes. The [synthetic intake fixtures](tests/fixtures/intake/)
+include text PDF and DOCX files, an [image-only resume](tests/fixtures/intake/ocr-resume.pdf),
+an unreadable scan, and a DOCX that exceeds the extraction limit.
+
+Resume intake accepts PDF, DOCX, PNG, and JPEG. Open a candidate and choose
+**View resume** to open it next to the candidate form on desktop. On smaller
+screens, switch between the resume and candidate details while keeping your
+draft. PDFs and scans support zoom and scrolling. The DOCX preview shows headings, lists,
+tables, and embedded images. Use **Download original** for exact Word formatting.
+
+The worker reads selectable resume text first. When candidate details are missing
+or ambiguous, it can run Tesseract locally on a PNG or JPEG resume, up to three
+PDF pages, or embedded PNG or JPEG images in a DOCX body. The worker image includes
+the English recognition model. Review the suggested values against the original
+before confirming the candidate. Experience ranges, approximations, and conflicting
+totals are left for HR to enter.
+
+To seed a sample drive, substitute the address of a verified synthetic HR account.
+
+```sh
+docker compose exec -e STUDIO_SEED_DRIVE_HR=hr-fixture@studio.test app node apps/server/src/seed.ts
+```
+
+Run the browser suite against a fresh `studio-*-test` Compose project. To include
+the recovery drills, also set `STUDIO_TEST_COMPOSE_PROJECT` to that project's
+name. The drills temporarily stop its worker and storage and inject failures
+into its test database.
 
 ## Web design system
 

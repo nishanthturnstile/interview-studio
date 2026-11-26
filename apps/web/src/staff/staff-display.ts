@@ -5,7 +5,3 @@ export const roleName: Record<StaffRole, string> = {
 	hr: "HR",
 	director: "Director",
 };
-
-export function canViewDrives(role: StaffRole) {
-	return role === "hr" || role === "director";
-}

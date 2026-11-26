@@ -15,4 +15,5 @@ export const probeJobSchema = z.object({
 	requestId: z.uuid(),
 });
 
+export * from "./drives.ts";
 export * from "./staff.ts";

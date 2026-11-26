@@ -1,0 +1,1 @@
+ALTER TABLE "drive" ADD COLUMN "jd_text" text;

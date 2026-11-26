@@ -15,6 +15,9 @@ RUN pnpm build
 
 FROM toolchain AS runtime
 ENV NODE_ENV=production
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
 RUN pnpm install --frozen-lockfile --prod --filter @studio/server...
 COPY apps/server/src/ apps/server/src/
 COPY apps/server/drizzle/ apps/server/drizzle/

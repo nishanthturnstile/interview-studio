@@ -1,4 +1,4 @@
-import type { StaffRole } from "@studio/contracts";
+import { canViewDrives, type StaffRole } from "@studio/contracts";
 import {
 	getRouteApi,
 	Link,
@@ -23,7 +23,6 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { StaffAccountMenu } from "./staff-account-menu";
-import { canViewDrives } from "./staff-display";
 
 const staffRoute = getRouteApi("/staff");
 
@@ -48,12 +47,15 @@ function WorkspaceNavigation({ role }: { role: StaffRole }) {
 							<SidebarMenuButton
 								size="lg"
 								tooltip={label}
-								isActive={pathname === to || pathname === `${to}/`}
+								isActive={
+									pathname === to ||
+									(to === "/staff/drives" && pathname.startsWith(`${to}/`))
+								}
 								className="h-10 group-data-[collapsible=icon]:justify-center"
 								render={
 									<Link
 										to={to}
-										activeOptions={{ exact: true }}
+										activeOptions={{ exact: to === "/staff" }}
 										aria-label={label}
 										onClick={() => setOpenMobile(false)}
 									/>
