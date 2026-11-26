@@ -45,35 +45,46 @@ export function DocumentHeader({
 	driveId,
 	preview,
 	showDownload = true,
+	compact = false,
 }: {
 	document: DocumentStatus;
 	driveId: string;
 	preview?: ReactNode;
 	showDownload?: boolean;
+	compact?: boolean;
 }) {
+	const status = (
+		<Badge
+			role="status"
+			variant={
+				document.parseState === "succeeded"
+					? "success"
+					: document.parseFailure
+						? "warning"
+						: "secondary"
+			}
+		>
+			{documentLabel(document)}
+		</Badge>
+	);
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
 			<div className="flex flex-wrap items-center justify-between gap-3">
-				<div className="flex min-w-0 items-start gap-3">
-					<span className="grid size-9 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
-						<FileText className="size-4" aria-hidden="true" />
-					</span>
-					<div className="min-w-0">
-						<h3 className="font-semibold [overflow-wrap:anywhere]">
-							{document.filename}
-						</h3>
-						<div className="mt-1">
-							<Badge
-								role="status"
-								variant={
-									document.parseState === "succeeded" ? "success" : "secondary"
-								}
-							>
-								{documentLabel(document)}
-							</Badge>
+				{compact ? (
+					status
+				) : (
+					<div className="flex min-w-0 items-start gap-3">
+						<span className="grid size-9 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
+							<FileText className="size-4" aria-hidden="true" />
+						</span>
+						<div className="min-w-0">
+							<h3 className="font-semibold [overflow-wrap:anywhere]">
+								{document.filename}
+							</h3>
+							<div className="mt-1">{status}</div>
 						</div>
 					</div>
-				</div>
+				)}
 				{document.uploadState === "stored" && (preview || showDownload) && (
 					<div className="flex flex-wrap items-center gap-2">
 						{preview}

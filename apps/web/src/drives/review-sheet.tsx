@@ -16,6 +16,7 @@ import {
 } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
 	Dialog,
 	DialogContent,
@@ -147,13 +148,14 @@ const CandidateDetails = memo(function CandidateDetails({
 				ref={scrollPane}
 				aria-label="Candidate details"
 				className={cn(
-					"min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6",
+					"@container/candidate min-h-0 min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain bg-card px-4 py-4 sm:px-6 sm:py-5",
 					previewOpen ? "hidden lg:flex" : "flex",
 				)}
 			>
 				<DocumentHeader
 					driveId={driveId}
 					document={document}
+					compact={previewOpen}
 					showDownload={!previewOpen}
 					preview={
 						!previewOpen && (
@@ -214,7 +216,7 @@ const CandidateDetails = memo(function CandidateDetails({
 	);
 });
 
-export function ReviewSheet({
+export const ReviewSheet = memo(function ReviewSheet({
 	item,
 	outsidePage,
 	driveId,
@@ -249,6 +251,10 @@ export function ReviewSheet({
 	const dirty = useRef(false);
 	const scrollPane = useRef<HTMLElement>(null);
 	const title = useRef<HTMLHeadingElement>(null);
+	const identity =
+		item?.candidate?.name ||
+		item?.candidate?.suggestions?.name ||
+		item?.document.filename;
 	const previewButton = useRef<HTMLButtonElement>(null);
 	const backButton = useRef<HTMLButtonElement>(null);
 	const focusPreview = useRef(false);
@@ -320,11 +326,19 @@ export function ReviewSheet({
 					previewOpen && "data-[side=right]:lg:max-w-[min(96vw,88rem)]",
 				)}
 			>
-				<SheetHeader className="shrink-0 gap-1 border-b px-5 py-4 pr-16 sm:px-6">
-					<SheetTitle ref={title} tabIndex={-1} className="outline-none">
-						Review candidate
-					</SheetTitle>
-					<SheetDescription>{position}</SheetDescription>
+				<SheetHeader className="min-h-16 shrink-0 justify-center gap-0.5 border-b px-4 py-3 pr-16 sm:px-6 sm:pr-16">
+					<SheetTitle className="sr-only">Review candidate</SheetTitle>
+					<h2
+						ref={title}
+						tabIndex={-1}
+						className="truncate text-lg font-semibold outline-none"
+						title={identity}
+					>
+						{identity || "Review candidate"}
+					</h2>
+					<SheetDescription className="sr-only">
+						{identity}. {position}
+					</SheetDescription>
 				</SheetHeader>
 				{item && (
 					<CandidateDetails
@@ -345,27 +359,32 @@ export function ReviewSheet({
 						onPending={setSaving}
 					/>
 				)}
-				<SheetFooter className="shrink-0 flex-row justify-between border-t bg-card px-5 py-3 sm:px-6">
-					<Button
-						variant="outline"
-						size="sm"
-						aria-label="Previous resume"
-						disabled={!canPrevious || moving || saving}
-						onClick={() => navigate(-1)}
-					>
-						<ChevronLeft aria-hidden="true" />
-						Previous
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						aria-label="Next resume"
-						disabled={!canNext || moving || saving}
-						onClick={() => navigate(1)}
-					>
-						Next resume
-						<ChevronRight aria-hidden="true" />
-					</Button>
+				<SheetFooter className="shrink-0 flex-row items-center justify-between border-t bg-card px-4 py-2 sm:px-6">
+					<p className="min-w-0 text-xs text-muted-foreground tabular-nums">
+						{position}
+					</p>
+					<ButtonGroup aria-label="Move between resumes">
+						<Button
+							variant="outline"
+							size="sm"
+							aria-label="Previous resume"
+							disabled={!canPrevious || moving || saving}
+							onClick={() => navigate(-1)}
+						>
+							<ChevronLeft aria-hidden="true" />
+							<span className="max-sm:sr-only">Previous</span>
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							aria-label="Next resume"
+							disabled={!canNext || moving || saving}
+							onClick={() => navigate(1)}
+						>
+							Next resume
+							<ChevronRight aria-hidden="true" />
+						</Button>
+					</ButtonGroup>
 				</SheetFooter>
 				<Dialog
 					open={discard !== undefined}
@@ -398,4 +417,4 @@ export function ReviewSheet({
 			</SheetContent>
 		</Sheet>
 	);
-}
+});

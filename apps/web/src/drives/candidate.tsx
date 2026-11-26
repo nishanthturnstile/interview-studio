@@ -3,12 +3,26 @@ import {
 	candidatePatchSchema,
 	candidateSchema,
 } from "@studio/contracts";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { ChevronDown, ClipboardCheck } from "lucide-react";
+import {
+	type FormEvent,
+	type ReactNode,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import {
 	type DriveRequest,
 	DriveRequestError,
@@ -30,6 +44,37 @@ function fields(candidate: Candidate) {
 	};
 }
 
+function ReviewDisclosure({
+	label,
+	children,
+}: {
+	label: string;
+	children: ReactNode;
+}) {
+	return (
+		<Collapsible>
+			<CollapsibleTrigger
+				render={
+					<Button
+						size="sm"
+						variant="ghost"
+						className="group w-full justify-between px-2.5"
+					/>
+				}
+			>
+				{label}
+				<ChevronDown
+					aria-hidden="true"
+					className="text-muted-foreground group-aria-expanded:rotate-180"
+				/>
+			</CollapsibleTrigger>
+			<CollapsibleContent className="px-2.5 pt-1 pb-3">
+				{children}
+			</CollapsibleContent>
+		</Collapsible>
+	);
+}
+
 export function CandidateEditor({
 	driveId,
 	candidate,
@@ -46,6 +91,7 @@ export function CandidateEditor({
 	onPending: (pending: boolean) => void;
 }) {
 	const id = useId();
+	const nameInput = useRef<HTMLInputElement>(null);
 	const [draft, setDraft] = useState<ReturnType<typeof fields>>();
 	const [revision, setRevision] = useState<number>();
 	const [pending, setPending] = useState(false);
@@ -152,6 +198,11 @@ export function CandidateEditor({
 
 	const suggestions = candidate.suggestions;
 	const hasSuggestions = suggestions && Object.keys(suggestions).length > 0;
+	const canFill =
+		suggestions &&
+		((!values.name && suggestions.name) ||
+			(!values.email && suggestions.email) ||
+			(!values.years && suggestions.years != null));
 	return (
 		<div className="flex flex-col gap-3">
 			{candidate.reviewState === "duplicate" ? (
@@ -168,60 +219,7 @@ export function CandidateEditor({
 						void submit("save");
 					}}
 				>
-					{hasSuggestions && (
-						<section
-							aria-labelledby={`${id}-suggestions`}
-							className="rounded-lg border bg-muted/35 p-3.5 sm:p-4"
-						>
-							<h3 id={`${id}-suggestions`} className="font-semibold">
-								Extraction suggestions
-							</h3>
-							<dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm [overflow-wrap:anywhere]">
-								{suggestions.name && (
-									<>
-										<dt className="text-muted-foreground">Name</dt>
-										<dd>{suggestions.name}</dd>
-									</>
-								)}
-								{suggestions.email && (
-									<>
-										<dt className="text-muted-foreground">Email</dt>
-										<dd>{suggestions.email}</dd>
-									</>
-								)}
-								{suggestions.years != null && (
-									<>
-										<dt className="text-muted-foreground">Experience</dt>
-										<dd>{suggestions.years} years</dd>
-									</>
-								)}
-							</dl>
-							<Button
-								className="mt-2.5"
-								size="sm"
-								type="button"
-								variant="outline"
-								disabled={
-									pending ||
-									!(
-										(!values.name && suggestions.name) ||
-										(!values.email && suggestions.email) ||
-										(!values.years && suggestions.years != null)
-									)
-								}
-								onClick={() =>
-									edit({
-										name: values.name || suggestions.name || "",
-										email: values.email || suggestions.email || "",
-										years: values.years || suggestions.years?.toString() || "",
-									})
-								}
-							>
-								Fill empty fields from suggestions
-							</Button>
-						</section>
-					)}
-					<div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+					<div className="flex flex-wrap items-center justify-between gap-2">
 						<h3 className="text-base font-semibold">Candidate record</h3>
 						<Badge
 							variant={
@@ -235,13 +233,14 @@ export function CandidateEditor({
 							{dirty ? "Unsaved changes" : reviewLabel[candidate.reviewState]}
 						</Badge>
 					</div>
-					<FieldGroup className="grid gap-3 sm:grid-cols-2">
+					<FieldGroup className="grid gap-3 @min-[23rem]/candidate:grid-cols-[minmax(0,1fr)_9rem]">
 						<Field
-							className="sm:col-span-2"
+							className="@min-[23rem]/candidate:col-span-2"
 							data-invalid={problem?.field === "name" || undefined}
 						>
 							<FieldLabel htmlFor={`${id}-name`}>Candidate name</FieldLabel>
 							<Input
+								ref={nameInput}
 								id={`${id}-name`}
 								aria-invalid={problem?.field === "name"}
 								autoComplete="off"
@@ -287,6 +286,27 @@ export function CandidateEditor({
 							/>
 						</Field>
 					</FieldGroup>
+
+					{canFill && (
+						<Button
+							type="button"
+							size="sm"
+							variant="secondary"
+							className="self-start"
+							disabled={pending}
+							onClick={() => {
+								edit({
+									name: values.name || suggestions.name || "",
+									email: values.email || suggestions.email || "",
+									years: values.years || suggestions.years?.toString() || "",
+								});
+								nameInput.current?.focus({ preventScroll: true });
+							}}
+						>
+							<ClipboardCheck data-icon="inline-start" aria-hidden="true" />
+							Fill empty fields from suggestions
+						</Button>
+					)}
 
 					<div className="flex flex-wrap gap-2">
 						<Button type="submit" size="sm" disabled={pending || !dirty}>
@@ -361,15 +381,41 @@ export function CandidateEditor({
 					{notice}
 				</p>
 			)}
-			{candidate.extractedText && (
-				<details className="mt-1 border-t pt-3 text-sm">
-					<summary className="cursor-pointer rounded-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-						Extracted text
-					</summary>
-					<div className="mt-2 max-h-52 overflow-y-auto rounded-md bg-muted p-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
-						{candidate.extractedText}
-					</div>
-				</details>
+			{(hasSuggestions || candidate.extractedText) && (
+				<div>
+					<Separator className="mb-1" />
+					{hasSuggestions && (
+						<ReviewDisclosure label="Extraction suggestions">
+							<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm [overflow-wrap:anywhere]">
+								{suggestions.name && (
+									<>
+										<dt className="text-muted-foreground">Name</dt>
+										<dd>{suggestions.name}</dd>
+									</>
+								)}
+								{suggestions.email && (
+									<>
+										<dt className="text-muted-foreground">Email</dt>
+										<dd>{suggestions.email}</dd>
+									</>
+								)}
+								{suggestions.years != null && (
+									<>
+										<dt className="text-muted-foreground">Experience</dt>
+										<dd>{suggestions.years} years</dd>
+									</>
+								)}
+							</dl>
+						</ReviewDisclosure>
+					)}
+					{candidate.extractedText && (
+						<ReviewDisclosure label="Extracted text">
+							<div className="max-h-60 overflow-y-auto overscroll-contain rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+								{candidate.extractedText}
+							</div>
+						</ReviewDisclosure>
+					)}
+				</div>
 			)}
 		</div>
 	);

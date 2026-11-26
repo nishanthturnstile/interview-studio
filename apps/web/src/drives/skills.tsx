@@ -4,7 +4,7 @@ import {
 	skillSetSchema,
 } from "@studio/contracts";
 import { ArrowDown, ArrowUp, Check, Plus, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ import {
 
 type SkillRow = { key: string; id?: string; name: string };
 
-export function Skills({
+export const Skills = memo(function Skills({
 	driveId,
 	set,
 	hr,
@@ -106,7 +106,7 @@ export function Skills({
 	}
 
 	return (
-		<Card className="min-w-0 gap-4">
+		<Card size="sm" className="min-w-0 gap-3">
 			<CardHeader className="flex flex-wrap items-center justify-between gap-2">
 				<CardTitle>
 					<h3>{title} skills</h3>
@@ -300,4 +300,4 @@ export function Skills({
 			</CardContent>
 		</Card>
 	);
-}
+});

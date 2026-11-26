@@ -10,10 +10,10 @@ import {
 	Navigate,
 	useBlocker,
 } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -62,7 +62,7 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 						(round) =>
 							current?.skills.find(
 								(set) =>
-									set.round === round.round && set.revision > round.revision,
+									set.round === round.round && set.revision >= round.revision,
 							) ?? round,
 					),
 				}));
@@ -83,7 +83,7 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 		void load();
 	}, [load]);
 
-	function saveSkills(set: SkillSet) {
+	const saveSkills = useCallback((set: SkillSet) => {
 		setOverview(
 			(current) =>
 				current && {
@@ -93,15 +93,19 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 					),
 				},
 		);
-	}
+	}, []);
 
 	return (
-		<section className="mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-6 px-4 py-6 sm:px-8 sm:py-9">
+		<section className="@container/drive mx-auto flex w-full min-w-0 max-w-[90rem] flex-col gap-6 px-4 py-4 sm:gap-7 sm:px-7 sm:py-6 xl:px-9">
 			<Link
 				to="/staff/drives"
-				className="inline-flex items-center gap-2 self-start text-sm font-medium text-muted-foreground underline-offset-4 hover:underline"
+				className={buttonVariants({
+					variant: "ghost",
+					size: "sm",
+					className: "-ml-2.5 self-start text-muted-foreground",
+				})}
 			>
-				<ArrowLeft className="size-4" aria-hidden="true" />
+				<ChevronLeft aria-hidden="true" />
 				Drives
 			</Link>
 			{error && (
@@ -119,18 +123,18 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 			)}
 			{overview && (
 				<>
-					<header className="flex min-w-0 flex-col gap-4">
-						<h1 className="font-display text-4xl leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-5xl">
+					<header className="flex min-w-0 flex-col gap-4 border-b pb-5 @min-[63rem]/drive:flex-row @min-[63rem]/drive:items-end @min-[63rem]/drive:justify-between">
+						<h1 className="min-w-0 font-display text-3xl leading-tight tracking-tight text-balance [overflow-wrap:anywhere] sm:text-4xl @min-[63rem]/drive:text-5xl">
 							{overview.name}
 						</h1>
-						<dl className="grid grid-cols-2 gap-y-3 border-y py-3 sm:grid-cols-4 sm:py-4">
+						<dl className="grid grid-cols-4 gap-1.5 @min-[63rem]/drive:w-[25rem] @min-[63rem]/drive:shrink-0">
 							{metrics.map(([key, label]) => (
 								<div
-									className="flex min-w-0 flex-wrap items-baseline gap-x-2 px-3 odd:border-r sm:border-r sm:px-4 sm:last:border-0"
+									className="flex min-w-0 flex-col gap-0.5 border-l pl-2 first:border-l-0 first:pl-0 sm:pl-4"
 									key={key}
 								>
-									<dt className="text-sm text-muted-foreground">{label}</dt>
-									<dd className="text-xl font-semibold tabular-nums">
+									<dt className="text-xs text-muted-foreground">{label}</dt>
+									<dd className="text-xl leading-tight font-semibold tabular-nums">
 										{overview.counts[key]}
 									</dd>
 								</div>
@@ -146,16 +150,16 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 						/>
 					)}
 					<section
-						className="flex min-w-0 flex-col gap-4 border-t pt-5"
+						className="flex min-w-0 flex-col gap-3 border-t pt-5"
 						aria-labelledby="scorecard-skills"
 					>
 						<h2
 							id="scorecard-skills"
-							className="scroll-mt-6 text-2xl font-semibold"
+							className="scroll-mt-6 text-xl font-semibold"
 						>
 							Scorecard skills
 						</h2>
-						<div className="grid gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))] lg:gap-5">
+						<div className="grid gap-4 @min-[45rem]/drive:grid-cols-2">
 							{overview.skills.map((set) => (
 								<Skills
 									key={set.round}

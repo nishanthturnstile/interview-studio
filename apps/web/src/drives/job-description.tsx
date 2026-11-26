@@ -17,6 +17,7 @@ import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { Textarea } from "@/components/ui/textarea";
 import {
 	type DriveRequest,
 	DriveRequestError,
@@ -120,13 +121,13 @@ export function JobDescriptionEditor({
 	}
 
 	return (
-		<Card id="job-description" className="min-w-0 scroll-mt-6 gap-4">
+		<Card id="job-description" size="sm" className="min-w-0 scroll-mt-6 gap-3">
 			<CardHeader>
 				<CardTitle>
 					<h2 className="flex items-center gap-2">
 						<FileText
 							aria-hidden="true"
-							className="size-5 shrink-0 text-primary"
+							className="size-4 shrink-0 text-muted-foreground"
 						/>
 						Job description
 					</h2>
@@ -138,9 +139,9 @@ export function JobDescriptionEditor({
 						<FieldLabel htmlFor={id} className="sr-only">
 							Job description text
 						</FieldLabel>
-						<textarea
+						<Textarea
 							id={id}
-							className="min-h-40 max-h-[32rem] w-full min-w-0 resize-y overflow-auto rounded-md border border-input bg-background px-3 py-3 text-base leading-relaxed text-foreground caret-primary placeholder:text-muted-foreground disabled:opacity-65 sm:min-h-44 sm:px-4 sm:text-sm"
+							className="h-36 min-h-28 max-h-96 min-w-0 resize-y overflow-auto [field-sizing:fixed] px-3 py-2.5 leading-relaxed caret-primary"
 							value={text}
 							placeholder="Type or paste the responsibilities, requirements, and qualifications…"
 							maxLength={jobDescriptionLimit}

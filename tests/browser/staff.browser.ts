@@ -54,15 +54,28 @@ async function signin(page: Page, email: string, secret = password) {
 }
 
 async function checkStaffShell(page: Page) {
+	const desktop = page.viewportSize();
+	await page.setViewportSize({ width: 1680, height: 900 });
 	const toggle = page.getByRole("button", { name: "Toggle navigation" });
+	const sidebar = page.locator('[data-slot="sidebar-container"]');
+	const sidebarGap = async () => {
+		const [button, panel] = await Promise.all([
+			toggle.boundingBox(),
+			sidebar.boundingBox(),
+		]);
+		return button && panel ? button.x - (panel.x + panel.width) : NaN;
+	};
 	const accountMenu = page.getByRole("button", {
 		name: "Account menu for Test Director",
 	});
 	const dashboard = page.getByRole("link", { name: "Dashboard" });
 	await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 	await expect(dashboard).toHaveAttribute("aria-current", "page");
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await expect.poll(sidebarGap).toBeCloseTo(12, 0);
 	await toggle.click();
 	await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	await expect.poll(sidebarGap).toBeCloseTo(12, 0);
 	await expect(dashboard).toBeVisible();
 	await accountMenu.press("Enter");
 	await expect(page.getByRole("menu")).toBeVisible();
@@ -77,8 +90,9 @@ async function checkStaffShell(page: Page) {
 	await page.getByRole("option", { name: "Light mode" }).click();
 	await expect(page.locator("html")).not.toHaveClass("dark");
 	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await expect.poll(sidebarGap).toBeCloseTo(12, 0);
 
-	const desktop = page.viewportSize();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(dashboard).toBeHidden();
 	await toggle.click();
@@ -366,6 +380,33 @@ test("prepares a drive with original files, independent candidate review, and re
 		const api = `${root}/${driveId}`;
 		await hr.reload();
 		await expect(hr.getByRole("heading", { name })).toBeVisible();
+		await hr.setViewportSize({ width: 1440, height: 920 });
+		const [descriptionBounds, intakeBounds, queueBounds, skillsBounds] =
+			await Promise.all([
+				hr.locator("#job-description").boundingBox(),
+				hr.locator("#resume-intake").boundingBox(),
+				hr.getByRole("region", { name: "Candidate review" }).boundingBox(),
+				hr.getByRole("region", { name: "Scorecard skills" }).boundingBox(),
+			]);
+		if (!descriptionBounds || !intakeBounds || !queueBounds || !skillsBounds)
+			throw new Error("Missing drive sections");
+		expect(descriptionBounds.y).toBeCloseTo(intakeBounds.y, 0);
+		expect(intakeBounds.height).toBeCloseTo(descriptionBounds.height, 0);
+		expect(descriptionBounds.x + descriptionBounds.width).toBeLessThan(
+			intakeBounds.x,
+		);
+		expect(queueBounds.x).toBeCloseTo(descriptionBounds.x, 0);
+		expect(queueBounds.x + queueBounds.width).toBeCloseTo(
+			intakeBounds.x + intakeBounds.width,
+			0,
+		);
+		expect(queueBounds.y).toBeGreaterThan(
+			Math.max(
+				descriptionBounds.y + descriptionBounds.height,
+				intakeBounds.y + intakeBounds.height,
+			),
+		);
+		expect(skillsBounds.y).toBeGreaterThan(queueBounds.y + queueBounds.height);
 
 		const description = hr.getByRole("textbox", {
 			name: "Job description text",
@@ -421,6 +462,17 @@ test("prepares a drive with original files, independent candidate review, and re
 			hr.getByRole("button", { name: "Use text from file" }),
 		).toBeVisible();
 		await expect(description).toHaveValue(writtenDescription);
+		await expect
+			.poll(() =>
+				hr.locator("#resume-intake").evaluate((element) => {
+					const description = document.querySelector("#job-description");
+					return (
+						element.getBoundingClientRect().height -
+						(description?.getBoundingClientRect().height ?? 0)
+					);
+				}),
+			)
+			.toBeCloseTo(0, 0);
 
 		const files = await Promise.all(
 			[
@@ -572,6 +624,18 @@ test("prepares a drive with original files, independent candidate review, and re
 			"leena.varma@example.test",
 		);
 		await expect(sheet.getByLabel("Years of experience")).toHaveValue("8.5");
+		const suggestions = sheet.getByRole("button", {
+			name: "Extraction suggestions",
+		});
+		await expect(suggestions).toHaveAttribute("aria-expanded", "false");
+		await suggestions.click();
+		await expect(suggestions).toHaveAttribute("aria-expanded", "true");
+		await expect(
+			sheet
+				.locator('[data-slot="collapsible-content"]')
+				.getByText("leena.varma@example.test"),
+		).toBeVisible();
+		await suggestions.click();
 		const desktop = hr.viewportSize();
 		await viewResume.click();
 		await expect(preview.locator('[data-rendered="true"]')).toHaveCount(1);
@@ -762,6 +826,23 @@ test("prepares a drive with original files, independent candidate review, and re
 		expect(await hr.evaluate(() => document.documentElement.scrollWidth)).toBe(
 			390,
 		);
+		const [mobileDescription, mobileIntake, mobileQueue] = await Promise.all([
+			hr.locator("#job-description").boundingBox(),
+			hr.locator("#resume-intake").boundingBox(),
+			queue.boundingBox(),
+		]);
+		if (!mobileDescription || !mobileIntake || !mobileQueue)
+			throw new Error("Missing mobile drive sections");
+		expect(mobileDescription.x).toBeCloseTo(mobileIntake.x, 0);
+		expect(mobileIntake.y).toBeGreaterThan(
+			mobileDescription.y + mobileDescription.height,
+		);
+		expect(mobileQueue.y).toBeGreaterThan(mobileIntake.y + mobileIntake.height);
+		const [chooser] = await Promise.all([
+			hr.waitForEvent("filechooser"),
+			hr.getByRole("button", { name: "Browse files" }).click(),
+		]);
+		expect(chooser.isMultiple()).toBe(true);
 		await hr.getByRole("button", { name: "Toggle navigation" }).click();
 		await hr
 			.getByRole("button", { name: "Account menu for Synthetic HR" })

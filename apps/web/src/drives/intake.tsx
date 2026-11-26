@@ -6,18 +6,13 @@ import {
 	statusLookupLimit,
 } from "@studio/contracts";
 import { cn } from "cn";
-import { CloudUpload, Paperclip } from "lucide-react";
+import { CloudUpload, Files, FolderOpen, Paperclip } from "lucide-react";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { type DriveRequest, documentListSchema, requestMessage } from "./api";
 import { DocumentHeader, isPending } from "./document";
 import { JobDescriptionEditor } from "./job-description";
@@ -53,13 +48,9 @@ function FilePicker({
 					item.state === "waiting" ||
 					item.state === "receiving"),
 		);
-	const limits = multiple
-		? "PDF, DOCX, PNG, or JPEG. Up to 10 MiB each and 20 files at a time."
-		: "PDF or DOCX up to 10 MiB.";
-
 	return (
-		<div className="flex min-w-0 flex-col gap-3">
-			<input
+		<div className={cn("flex min-w-0 flex-col gap-3", multiple && "flex-1")}>
+			<Input
 				ref={input}
 				className="hidden"
 				type="file"
@@ -84,7 +75,7 @@ function FilePicker({
 				<div
 					id="resume-dropzone"
 					className={cn(
-						"flex min-h-56 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-input bg-muted/45 px-5 py-6 text-center transition-colors",
+						"flex min-h-48 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-input bg-muted/35 px-4 py-5 text-center transition-colors",
 						dragging && "border-primary bg-accent",
 					)}
 					onDragEnter={(event) => {
@@ -110,26 +101,24 @@ function FilePicker({
 						if (files.length) uploads.add(files, kind);
 					}}
 				>
-					<span className="grid size-11 place-items-center rounded-lg bg-accent text-accent-foreground">
-						<CloudUpload className="size-6" aria-hidden="true" />
+					<span className="grid size-11 shrink-0 place-items-center rounded-xl bg-accent text-accent-foreground">
+						<CloudUpload className="size-5" aria-hidden="true" />
 					</span>
-					<p className="text-base font-semibold">
+					<p aria-live="polite" className="text-base font-semibold">
 						{dragging ? "Release to upload" : "Drag and drop resumes"}
-					</p>
-					<p
-						id={id}
-						className="max-w-xs text-xs leading-relaxed text-muted-foreground"
-					>
-						{limits}
 					</p>
 					<Button
 						type="button"
-						variant="outline"
 						aria-describedby={id}
 						onClick={() => input.current?.click()}
 					>
-						Browse files
+						<FolderOpen data-icon="inline-start" aria-hidden="true" /> Browse
+						files
 					</Button>
+					<p id={id} className="text-xs leading-relaxed text-muted-foreground">
+						PDF, DOCX, PNG, or JPEG.
+						<span className="block">Up to 20 files, 10 MiB each.</span>
+					</p>
 				</div>
 			) : (
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -145,7 +134,7 @@ function FilePicker({
 						{hasJd ? "Replace file" : "Import file"}
 					</Button>
 					<p id={id} className="text-xs text-muted-foreground">
-						{limits}
+						PDF or DOCX up to 10 MiB.
 					</p>
 				</div>
 			)}
@@ -383,7 +372,7 @@ export const Intake = memo(function Intake({
 					<AlertTitle>Intake updates are delayed. {pollError}</AlertTitle>
 				</Alert>
 			)}
-			<div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.18fr)_minmax(0,1fr)] lg:gap-5">
+			<div className="grid min-w-0 gap-4 @min-[43rem]/drive:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] @min-[43rem]/drive:gap-5">
 				<JobDescriptionEditor
 					driveId={driveId}
 					request={request}
@@ -419,22 +408,23 @@ export const Intake = memo(function Intake({
 						</>
 					}
 				/>
-				<Card id="resume-intake" className="min-w-0 scroll-mt-6 gap-4">
+				<Card
+					id="resume-intake"
+					size="sm"
+					className="min-w-0 scroll-mt-6 gap-3"
+				>
 					<CardHeader>
 						<CardTitle>
 							<h2 className="flex items-center gap-2">
-								<CloudUpload
+								<Files
+									className="size-4 shrink-0 text-muted-foreground"
 									aria-hidden="true"
-									className="size-5 shrink-0 text-primary"
 								/>
 								Resume intake
 							</h2>
 						</CardTitle>
-						<CardDescription>
-							Upload resumes to create candidate drafts.
-						</CardDescription>
 					</CardHeader>
-					<CardContent className="flex flex-col gap-3">
+					<CardContent className="flex flex-1 flex-col">
 						{intake ? (
 							<FilePicker kind="resume" uploads={uploads} />
 						) : (

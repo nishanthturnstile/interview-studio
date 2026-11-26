@@ -2,6 +2,7 @@ import { type DocumentStatus, wordMediaType } from "@studio/contracts";
 import {
 	ArrowLeft,
 	Download,
+	FileText,
 	LoaderCircle,
 	ZoomIn,
 	ZoomOut,
@@ -183,58 +184,59 @@ export const ResumeViewer = memo(function ResumeViewer({
 			aria-label="Resume preview"
 			className="flex min-h-0 min-w-0 flex-col lg:border-r"
 		>
-			<header className="shrink-0 border-b bg-popover px-4 py-3 sm:px-5">
-				<div className="flex min-w-0 items-start justify-between gap-3">
+			<header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b bg-card px-3 py-2 sm:px-5">
+				<div className="flex min-w-0 flex-1 basis-36 items-center gap-2">
+					<FileText
+						className="size-4 shrink-0 text-muted-foreground"
+						aria-hidden="true"
+					/>
 					<div className="min-w-0">
 						<h3
-							className="truncate text-base font-semibold"
+							className="truncate text-sm font-semibold"
 							title={document.filename}
 						>
 							{document.filename}
 						</h3>
+						{stored && word && (
+							<p className="text-xs text-muted-foreground">
+								Word formatting may differ.
+							</p>
+						)}
 					</div>
-					<Button
-						ref={closeButton}
-						variant="ghost"
-						size="sm"
-						onClick={onClose}
-						className="shrink-0"
-					>
+				</div>
+				<div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
+					{stored && !word && (
+						<Button
+							size="sm"
+							variant="outline"
+							onClick={() => setZoomed((value) => !value)}
+						>
+							<ZoomIcon aria-hidden="true" />
+							{zoomed ? "Fit width" : "Zoom in"}
+						</Button>
+					)}
+					{stored && (
+						<a
+							className={buttonVariants({ size: "icon-sm", variant: "ghost" })}
+							href={download}
+							aria-label="Download original"
+							title="Download original"
+						>
+							<Download aria-hidden="true" />
+						</a>
+					)}
+					<Button ref={closeButton} variant="ghost" size="sm" onClick={onClose}>
 						<ArrowLeft aria-hidden="true" />
 						<span className="lg:hidden">Back to candidate</span>
 						<span className="hidden lg:inline">Hide resume</span>
 					</Button>
 				</div>
-				{stored && (
-					<div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-						{word ? (
-							<p className="text-xs text-muted-foreground">
-								Word formatting may differ from the original.
-							</p>
-						) : (
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() => setZoomed((value) => !value)}
-							>
-								<ZoomIcon aria-hidden="true" />
-								{zoomed ? "Fit width" : "Zoom in"}
-							</Button>
-						)}
-						<a
-							className={buttonVariants({ size: "sm", variant: "ghost" })}
-							href={download}
-						>
-							<Download aria-hidden="true" /> Download original
-						</a>
-					</div>
-				)}
 			</header>
 			<section
 				aria-label="Resume pages"
 				// biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to focus this scroll pane.
 				tabIndex={0}
-				className="min-h-0 flex-1 overflow-auto overscroll-contain bg-muted/70 p-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:p-5"
+				className="min-h-0 flex-1 overflow-auto overscroll-contain bg-muted/70 p-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:px-6 sm:py-5"
 			>
 				{!stored ? (
 					<p

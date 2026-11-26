@@ -94,7 +94,7 @@ function StaffToolbar() {
 	const { isMobile, open, openMobile } = useSidebar();
 	return (
 		<header className="min-h-16 border-b bg-card">
-			<div className="mx-auto flex min-h-16 max-w-6xl items-center gap-3 px-4 sm:px-8">
+			<div className="flex min-h-16 items-center gap-3 px-4 md:px-3">
 				<SidebarTrigger
 					size="icon"
 					aria-label="Toggle navigation"
