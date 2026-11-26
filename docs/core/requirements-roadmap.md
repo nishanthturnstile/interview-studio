@@ -35,6 +35,11 @@ Take one slice per implementation task. Deliver its screen, server-side permissi
 
 - [ ] **Done when** an early arrival outside the window, a wrong email, and a revoked link are denied. Book overlapping slots in two drives using case variants of the same confirmed email. HR sees a warning and can proceed. Check panelist overlap separately. An admitted candidate can refresh and reconnect during overtime. Closure immediately ends candidate access, including any open live connection.
 
+Local Slice 4 rehearsal passed with isolated PostgreSQL, Mailpit, and separate
+staff and candidate browser sessions. The shared HTTPS origin and the full link
+inside an actual Teams invitation still need verification. Live-connection
+closure is part of the Slice 7 transport work.
+
 ## 5. Complete L1 and L2 manually
 
 - Give the assigned panelist a private list of questions asked, manual notes, and a scorecard. Freeze each attempt’s criteria. For each skill, offer **Below expectations**, **Meets expectations**, **Exceeds expectations**, or **Not assessed**. Require the panelist’s decision and rationale, and store the author and submission time.

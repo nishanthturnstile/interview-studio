@@ -44,6 +44,8 @@ const messages: Partial<Record<DriveError["error"], string>> = {
 	upload_retry_required:
 		"The previous attempt expired or failed. Start a new attempt.",
 	revision_conflict: "Someone saved a newer version while you were editing.",
+	interview_email_in_use:
+		"Cancel the upcoming interview or close the active round before changing this email.",
 	duplicate_email:
 		"A confirmed candidate in this drive already uses this email.",
 	invalid_review:

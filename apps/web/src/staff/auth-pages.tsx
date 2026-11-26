@@ -3,7 +3,7 @@ import {
 	staffSignupSchema,
 	workEmailSchema,
 } from "@studio/contracts";
-import { Link, useRouterState } from "@tanstack/react-router";
+import { getRouteApi, Link, useRouterState } from "@tanstack/react-router";
 import {
 	CircleAlert,
 	CircleCheck,
@@ -116,6 +116,7 @@ function AuthPanel({
 }
 
 export function SignIn() {
+	const { invitationId } = getRouteApi("/_auth/sign-in").useSearch();
 	const query = new URLSearchParams(window.location.search);
 	const notice = query.has("error")
 		? "This verification link is invalid or expired. Request a new one."
@@ -163,7 +164,11 @@ export function SignIn() {
 							error.code,
 							"The email or password is incorrect.",
 						);
-					window.location.replace("/staff");
+					window.location.replace(
+						invitationId
+							? `/staff/my-interviews/invitations/${invitationId}`
+							: "/staff",
+					);
 				}}
 			/>
 			<p className="flex flex-wrap justify-between gap-x-4 gap-y-2 text-sm">

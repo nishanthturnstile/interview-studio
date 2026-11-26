@@ -8,6 +8,10 @@ import { db, pool } from "./database.ts";
 import { sweepOriginals } from "./drives/cleanup.ts";
 import { driveRoutes } from "./drives/routes.ts";
 import { sweepStaging } from "./drives/staging.ts";
+import { sweepAdmission } from "./interviews/admission.ts";
+import { interviewCandidateRoutes } from "./interviews/candidate-routes.ts";
+import { interviewStaffRoutes } from "./interviews/staff-routes.ts";
+import { readInterviewConfig } from "./interviews/store.ts";
 import { createQueueClient, intakeQueue, probeQueue } from "./jobs.ts";
 import { errorClass, logger } from "./logger.ts";
 import { workerHeartbeat } from "./schema.ts";
@@ -25,7 +29,9 @@ pool.on("error", (error) =>
 );
 
 const staffSettings = readStaffSettings(process.env);
-const auth = createStaffAuth(db, staffSettings, createStaffMailer(process.env));
+const interviewConfig = readInterviewConfig(process.env, staffSettings);
+const mailer = createStaffMailer(process.env);
+const auth = createStaffAuth(db, staffSettings, mailer.send);
 const boss = createQueueClient();
 try {
 	await boss.start();
@@ -51,13 +57,27 @@ async function sweep() {
 		} catch (error) {
 			logger.warn({ errorClass: errorClass(error) }, "Intake sweep failed");
 		}
+		try {
+			await sweepAdmission(db, new Date());
+		} catch (error) {
+			logger.warn(
+				{ errorClass: errorClass(error) },
+				"Interview admission sweep failed",
+			);
+		}
 		await delay(15_000, undefined, { signal: cleanup.signal }).catch(
 			() => undefined,
 		);
 	} while (!cleanup.signal.aborted);
 }
 const sweeping = sweep();
-const staff = staffRoutes(db, staffSettings, auth, driveRoutes(db, boss));
+const staff = staffRoutes(
+	db,
+	staffSettings,
+	auth,
+	driveRoutes(db, boss),
+	interviewStaffRoutes(db, interviewConfig),
+);
 
 const app = createApp(
 	async () => {
@@ -84,6 +104,7 @@ const app = createApp(
 	},
 	logger,
 	staff,
+	interviewCandidateRoutes(db, interviewConfig, staffSettings, mailer.deliver),
 );
 
 const serveWebApp = serveStatic({ path: "./apps/web/dist/index.html" });
@@ -99,6 +120,12 @@ for (const path of [
 	"/staff/drives",
 	"/staff/drives/:driveId",
 	"/staff/settings",
+	"/staff/interviews",
+	"/staff/my-interviews",
+	"/staff/my-interviews/:roundId",
+	"/staff/my-interviews/invitations/:invitationId",
+	"/join/:invitationId",
+	"/interview/:roundId",
 ]) {
 	app.get(path, async (c, next) => {
 		c.header("Referrer-Policy", "no-referrer");

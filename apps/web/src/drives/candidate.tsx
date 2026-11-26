@@ -3,6 +3,7 @@ import {
 	candidatePatchSchema,
 	candidateSchema,
 } from "@studio/contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ClipboardCheck } from "lucide-react";
 import {
 	type FormEvent,
@@ -23,6 +24,7 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { invalidateHrInterviews } from "../interviews/hr-queries";
 import {
 	type DriveRequest,
 	DriveRequestError,
@@ -91,6 +93,7 @@ export function CandidateEditor({
 	onPending: (pending: boolean) => void;
 }) {
 	const id = useId();
+	const queryClient = useQueryClient();
 	const nameInput = useRef<HTMLInputElement>(null);
 	const [draft, setDraft] = useState<ReturnType<typeof fields>>();
 	const [revision, setRevision] = useState<number>();
@@ -167,6 +170,7 @@ export function CandidateEditor({
 				jsonRequest(action === "save" ? "PATCH" : "POST", payload),
 			);
 			onSaved(updated);
+			void invalidateHrInterviews(queryClient);
 			setDraft(undefined);
 			setRevision(undefined);
 			setNotice(

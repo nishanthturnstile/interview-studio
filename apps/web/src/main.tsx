@@ -1,4 +1,8 @@
-import { type Health, healthSchema } from "@studio/contracts";
+import {
+	type Health,
+	healthSchema,
+	interviewPageNumberSchema,
+} from "@studio/contracts";
 import {
 	createRootRoute,
 	createRoute,
@@ -17,6 +21,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import "./interviews/invitation-fragment.ts";
+import { z } from "zod";
 import { loadStaff, loadStaffAccess } from "./staff/staff-api.ts";
 import "./globals.css";
 
@@ -158,6 +164,11 @@ const index = createRoute({
 const signIn = createRoute({
 	getParentRoute: () => authRoute,
 	path: "/sign-in",
+	validateSearch: (
+		input: Record<string, unknown>,
+	): { invitationId?: string } => ({
+		invitationId: z.uuid().safeParse(input.invitationId).data,
+	}),
 	component: lazyRouteComponent(
 		() => import("./staff/auth-pages.tsx"),
 		"SignIn",
@@ -199,7 +210,7 @@ const resetPassword = createRoute({
 const staffRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: "/staff",
-	loader: loadStaff,
+	loader: ({ location }) => loadStaff(location.pathname),
 	component: lazyRouteComponent(
 		() => import("./staff/staff-layout.tsx"),
 		"StaffLayout",
@@ -237,6 +248,75 @@ const accountRoute = createRoute({
 		"StaffAccount",
 	),
 });
+const interviewsRoute = createRoute({
+	getParentRoute: () => staffRoute,
+	path: "interviews",
+	validateSearch: (input: Record<string, unknown>) => ({
+		tab: z.enum(["queue", "scheduled", "history"]).safeParse(input.tab).data,
+		search:
+			typeof input.search === "string" ? input.search.slice(0, 120) : undefined,
+		driveId: z.uuid().safeParse(input.driveId).data,
+		minYears:
+			input.minYears === undefined
+				? undefined
+				: String(input.minYears).slice(0, 8),
+		maxYears:
+			input.maxYears === undefined
+				? undefined
+				: String(input.maxYears).slice(0, 8),
+		page: interviewPageNumberSchema.safeParse(input.page).data,
+		booking: z.uuid().safeParse(input.booking).data,
+	}),
+	component: lazyRouteComponent(
+		() => import("./interviews/hr-pages.tsx"),
+		"Interviews",
+	),
+});
+const myInterviewsRoute = createRoute({
+	getParentRoute: () => staffRoute,
+	path: "my-interviews",
+	validateSearch: (input: Record<string, unknown>): { page?: number } => ({
+		page: interviewPageNumberSchema.safeParse(input.page).data,
+	}),
+	component: lazyRouteComponent(
+		() => import("./interviews/panelist-pages.tsx"),
+		"MyInterviews",
+	),
+});
+const panelistRoundRoute = createRoute({
+	getParentRoute: () => staffRoute,
+	path: "my-interviews/$roundId",
+	remountDeps: ({ params }) => params.roundId,
+	component: lazyRouteComponent(
+		() => import("./interviews/panelist-pages.tsx"),
+		"PanelistRound",
+	),
+});
+const staffInviteRoute = createRoute({
+	getParentRoute: () => staffRoute,
+	path: "my-interviews/invitations/$invitationId",
+	component: lazyRouteComponent(
+		() => import("./interviews/panelist-pages.tsx"),
+		"ResolveStaffInvitation",
+	),
+});
+const publicInviteRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/join/$invitationId",
+	component: lazyRouteComponent(
+		() => import("./interviews/candidate-pages.tsx"),
+		"JoinInterview",
+	),
+});
+const candidateRoundRoute = createRoute({
+	getParentRoute: () => rootRoute,
+	path: "/interview/$roundId",
+	remountDeps: ({ params }) => params.roundId,
+	component: lazyRouteComponent(
+		() => import("./interviews/candidate-pages.tsx"),
+		"CandidateRound",
+	),
+});
 const settingsRoute = createRoute({
 	getParentRoute: () => staffRoute,
 	path: "settings",
@@ -258,10 +338,16 @@ const accessRoute = createRoute({
 const router = createRouter({
 	routeTree: rootRoute.addChildren([
 		index,
+		publicInviteRoute,
+		candidateRoundRoute,
 		staffRoute.addChildren([
 			dashboardRoute,
 			drivesRoute,
 			driveDetailRoute,
+			interviewsRoute,
+			myInterviewsRoute,
+			panelistRoundRoute,
+			staffInviteRoute,
 			accountRoute,
 			settingsRoute,
 			accessRoute,

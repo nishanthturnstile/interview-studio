@@ -1,3 +1,4 @@
+import { canManageInterviews } from "@studio/contracts";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { setDarkMode, useDarkMode } from "@/components/theme";
@@ -19,6 +20,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { SchedulingPreferences } from "../interviews/preferences";
 import { roleName } from "./staff-display";
 
 const staffRoute = getRouteApi("/staff");
@@ -133,6 +135,7 @@ function AppearanceSetting() {
 }
 
 export function StaffSettings() {
+	const viewer = staffRoute.useLoaderData();
 	return (
 		<StaffSection title="Settings">
 			<Card className="max-w-2xl">
@@ -146,6 +149,7 @@ export function StaffSettings() {
 					<AppearanceSetting />
 				</CardContent>
 			</Card>
+			{canManageInterviews(viewer.role) && <SchedulingPreferences />}
 		</StaffSection>
 	);
 }

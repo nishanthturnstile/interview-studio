@@ -251,6 +251,7 @@ export const driveErrorSchema = z.object({
 		"upload_retry_required",
 		"revision_conflict",
 		"duplicate_email",
+		"interview_email_in_use",
 		"invalid_review",
 		"original_missing",
 		"preview_unavailable",

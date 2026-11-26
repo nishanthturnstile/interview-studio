@@ -43,7 +43,7 @@ function eligibleStaff(database: typeof db, domains: ReadonlySet<string>) {
 }
 
 export async function getStaff(
-	database: typeof db,
+	database: Pick<typeof db, "select">,
 	userId: string,
 	domains: ReadonlySet<string>,
 ) {

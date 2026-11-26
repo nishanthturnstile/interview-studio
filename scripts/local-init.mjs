@@ -13,6 +13,7 @@ import { parseEnv } from "node:util";
 const token = (size) => randomBytes(size).toString("hex");
 const path = new URL("../.env", import.meta.url);
 const auth = {
+	STUDIO_INTERVIEW_SECRET: token(32),
 	STUDIO_AUTH_SECRET: token(32),
 	STUDIO_STAFF_DOMAINS: "studio.test",
 	STUDIO_DIRECTOR_EMAIL: "director@studio.test",
@@ -70,7 +71,7 @@ try {
 		);
 		if (missing.length) {
 			await appendFile(path, `\n${serialize(missing)}`);
-			console.log("Added missing staff settings to the existing .env.");
+			console.log("Added missing application settings to the existing .env.");
 		} else {
 			console.log("Using existing .env.");
 		}

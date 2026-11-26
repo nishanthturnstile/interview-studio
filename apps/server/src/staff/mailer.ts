@@ -19,14 +19,21 @@ export function createStaffMailer(env: NodeJS.ProcessEnv) {
 		socketTimeout: 10_000,
 	});
 
-	return (to: string, subject: string, text: string) => {
-		void transport
-			.sendMail({ from, to, subject, text })
-			.catch((error: unknown) => {
-				logger.warn(
-					{ errorClass: errorClass(error) },
-					"Staff email delivery failed",
-				);
-			});
+	async function deliver(to: string, subject: string, text: string) {
+		try {
+			const result = await transport.sendMail({ from, to, subject, text });
+			if (!result.accepted.length)
+				throw new Error("SMTP did not accept a recipient");
+		} catch (error) {
+			logger.warn({ errorClass: errorClass(error) }, "Email delivery failed");
+			throw error;
+		}
+	}
+
+	return {
+		deliver,
+		send(to: string, subject: string, text: string) {
+			void deliver(to, subject, text).catch(() => {});
+		},
 	};
 }

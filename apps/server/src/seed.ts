@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { db, pool } from "./database.ts";
 import { createDrive } from "./drives/routes.ts";
 import { fixtureContents, fixtureKey, sha256 } from "./fixture.ts";
+import { seedInterviewFixture } from "./interviews/fixture.ts";
+import { readInterviewConfig } from "./interviews/store.ts";
 import { errorClass, logger } from "./logger.ts";
 import { smokeFixture } from "./schema.ts";
 import { user } from "./staff/auth-schema.ts";
@@ -48,6 +50,15 @@ try {
 			"Synthetic hiring drive",
 		);
 		logger.info({ driveId: result.id }, "Synthetic drive seeded");
+	}
+	if (process.env.STUDIO_SEED_INTERVIEW_PASSWORD) {
+		const settings = readStaffSettings(process.env);
+		await seedInterviewFixture(
+			db,
+			readInterviewConfig(process.env, settings),
+			process.env.STUDIO_SEED_INTERVIEW_PASSWORD,
+		);
+		logger.info("Synthetic interview fixtures seeded");
 	}
 } catch (error) {
 	logger.error({ errorClass: errorClass(error) }, "Synthetic seed failed");

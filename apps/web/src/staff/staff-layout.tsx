@@ -1,11 +1,26 @@
-import { canViewDrives, type StaffRole } from "@studio/contracts";
+import {
+	canManageInterviews,
+	canViewAssignedInterviews,
+	canViewDrives,
+	type StaffIdentity,
+	type StaffRole,
+} from "@studio/contracts";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	getRouteApi,
 	Link,
 	Outlet,
 	useRouterState,
 } from "@tanstack/react-router";
-import { FolderOpen, LayoutDashboard, PanelsTopLeft, X } from "lucide-react";
+import {
+	CalendarCheck,
+	CalendarDays,
+	FolderOpen,
+	LayoutDashboard,
+	PanelsTopLeft,
+	X,
+} from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Sidebar,
@@ -27,8 +42,30 @@ import { StaffAccountMenu } from "./staff-account-menu";
 const staffRoute = getRouteApi("/staff");
 
 const navigation = [
-	{ label: "Dashboard", to: "/staff", icon: LayoutDashboard },
-	{ label: "Drives", to: "/staff/drives", icon: FolderOpen },
+	{
+		label: "Dashboard",
+		to: "/staff",
+		icon: LayoutDashboard,
+		canView: () => true,
+	},
+	{
+		label: "Drives",
+		to: "/staff/drives",
+		icon: FolderOpen,
+		canView: canViewDrives,
+	},
+	{
+		label: "Interviews",
+		to: "/staff/interviews",
+		icon: CalendarDays,
+		canView: canManageInterviews,
+	},
+	{
+		label: "My interviews",
+		to: "/staff/my-interviews",
+		icon: CalendarCheck,
+		canView: canViewAssignedInterviews,
+	},
 ] as const;
 
 function WorkspaceNavigation({ role }: { role: StaffRole }) {
@@ -36,7 +73,7 @@ function WorkspaceNavigation({ role }: { role: StaffRole }) {
 	const pathname = useRouterState({
 		select: (state) => state.location.pathname,
 	});
-	const items = canViewDrives(role) ? navigation : navigation.slice(0, 1);
+	const items = navigation.filter((item) => item.canView(role));
 
 	return (
 		<nav aria-label="Staff navigation">
@@ -49,7 +86,7 @@ function WorkspaceNavigation({ role }: { role: StaffRole }) {
 								tooltip={label}
 								isActive={
 									pathname === to ||
-									(to === "/staff/drives" && pathname.startsWith(`${to}/`))
+									(to !== "/staff" && pathname.startsWith(`${to}/`))
 								}
 								className="h-10 group-data-[collapsible=icon]:justify-center"
 								render={
@@ -108,33 +145,40 @@ function StaffToolbar() {
 
 export function StaffLayout() {
 	const viewer = staffRoute.useLoaderData();
+	return <StaffWorkspace key={`${viewer.id}:${viewer.role}`} viewer={viewer} />;
+}
+
+function StaffWorkspace({ viewer }: { viewer: StaffIdentity }) {
+	const [queryClient] = useState(() => new QueryClient());
 	return (
-		<SidebarProvider>
-			<Sidebar collapsible="icon">
-				<SidebarHeader className="h-16 flex-row items-center justify-between">
-					<div className="flex min-w-0 items-center gap-2 font-bold tracking-tight">
-						<span className="flex size-8 shrink-0 items-center justify-center rounded-sm bg-sidebar-accent text-sidebar-accent-foreground">
-							<PanelsTopLeft className="size-4" aria-hidden="true" />
-						</span>
-						<span className="truncate group-data-[collapsible=icon]:hidden">
-							Interview Studio
-						</span>
-					</div>
-					<CloseMobileNavigation />
-				</SidebarHeader>
-				<SidebarSeparator />
-				<SidebarContent className="pt-3">
-					<WorkspaceNavigation role={viewer.role} />
-				</SidebarContent>
-				<SidebarSeparator />
-				<SidebarFooter>
-					<StaffAccountMenu viewer={viewer} />
-				</SidebarFooter>
-			</Sidebar>
-			<SidebarInset className="min-w-0">
-				<StaffToolbar />
-				<Outlet />
-			</SidebarInset>
-		</SidebarProvider>
+		<QueryClientProvider client={queryClient}>
+			<SidebarProvider>
+				<Sidebar collapsible="icon">
+					<SidebarHeader className="h-16 flex-row items-center justify-between">
+						<div className="flex min-w-0 items-center gap-2 font-bold tracking-tight">
+							<span className="flex size-8 shrink-0 items-center justify-center rounded-sm bg-sidebar-accent text-sidebar-accent-foreground">
+								<PanelsTopLeft className="size-4" aria-hidden="true" />
+							</span>
+							<span className="truncate group-data-[collapsible=icon]:hidden">
+								Interview Studio
+							</span>
+						</div>
+						<CloseMobileNavigation />
+					</SidebarHeader>
+					<SidebarSeparator />
+					<SidebarContent className="pt-3">
+						<WorkspaceNavigation role={viewer.role} />
+					</SidebarContent>
+					<SidebarSeparator />
+					<SidebarFooter>
+						<StaffAccountMenu viewer={viewer} />
+					</SidebarFooter>
+				</Sidebar>
+				<SidebarInset className="min-w-0">
+					<StaffToolbar />
+					<Outlet />
+				</SidebarInset>
+			</SidebarProvider>
+		</QueryClientProvider>
 	);
 }

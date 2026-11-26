@@ -152,6 +152,15 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 		await expect(director.getByRole("status")).toContainText("Email verified");
 		await signin(director, directorEmail);
 		await expect(director.getByText("Director", { exact: true })).toBeVisible();
+		expect((await director.request.get("/api/staff/interviews")).status()).toBe(
+			403,
+		);
+		expect(
+			(await director.request.get("/api/staff/my-interviews")).status(),
+		).toBe(403);
+		expect(
+			(await director.request.get("/api/staff/settings/interviews")).status(),
+		).toBe(403);
 		await checkStaffShell(director);
 
 		await signup(panelist, "Test Panelist", panelistEmail);
@@ -262,7 +271,7 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 		await expect(panelist.getByRole("alert")).toContainText(
 			"email or password is incorrect",
 		);
-		await signin(panelist, panelistEmail, newPassword);
+		await signinWhenAvailable(panelist, panelistEmail, newPassword);
 		await expect(panelist.getByText("Director", { exact: true })).toBeVisible();
 		await director.goto(reset);
 		await expect(director.getByRole("alert")).toContainText(
@@ -299,7 +308,11 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 const fixturePath = (name: string) =>
 	fileURLToPath(new URL(`../fixtures/intake/${name}`, import.meta.url));
 
-async function signinWhenAvailable(page: Page, address: string) {
+async function signinWhenAvailable(
+	page: Page,
+	address: string,
+	secret = password,
+) {
 	await expect
 		.poll(
 			async () => {
@@ -307,7 +320,7 @@ async function signinWhenAvailable(page: Page, address: string) {
 					(response) =>
 						new URL(response.url()).pathname === "/api/auth/sign-in/email",
 				);
-				await signin(page, address);
+				await signin(page, address, secret);
 				return (await attempt).status();
 			},
 			{ intervals: [11_000], timeout: 25_000 },

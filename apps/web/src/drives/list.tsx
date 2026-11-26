@@ -3,6 +3,7 @@ import {
 	type DriveOverview,
 	driveCreateSchema,
 } from "@studio/contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	getRouteApi,
 	Link,
@@ -47,6 +48,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { invalidateHrInterviews } from "../interviews/hr-queries";
 import {
 	createdDriveSchema,
 	type DriveRequest,
@@ -64,6 +66,7 @@ function CreateDrive({ request }: { request: DriveRequest }) {
 	const attempt = useRef<{ name: string; key: string }>(null);
 	const inputId = useId();
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		const input = driveCreateSchema.safeParse({ name });
@@ -83,6 +86,7 @@ function CreateDrive({ request }: { request: DriveRequest }) {
 					"Idempotency-Key": attempt.current.key,
 				}),
 			);
+			void invalidateHrInterviews(queryClient);
 			setOpen(false);
 			await navigate({ to: "/staff/drives/$driveId", params: { driveId: id } });
 		} catch (error) {

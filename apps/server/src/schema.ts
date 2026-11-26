@@ -11,5 +11,6 @@ export const smokeFixture = pgTable("smoke_fixture", {
 });
 
 export * from "./drives/schema.ts";
+export * from "./interviews/schema.ts";
 export * from "./staff/auth-schema.ts";
 export * from "./staff/role-schema.ts";

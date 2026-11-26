@@ -91,8 +91,10 @@ unset STUDIO_PORT STUDIO_MAILPIT_PORT STUDIO_AUTH_ORIGIN STUDIO_STAFF_DOMAINS ST
 ```
 
 Set `STUDIO_TEST_DATABASE_URL` to a fresh test PostgreSQL database to include
-the transactional role tests in `pnpm test`. The test suite applies migrations
-and creates synthetic rows in that database.
+the transactional role and interview tests in `pnpm test`. The role tests migrate
+and insert synthetic rows in that database. The interview tests use the same server
+with a temporary database to verify the Slice 3 upgrade, so the test role needs
+permission to create databases.
 
 ## Local drive intake
 
@@ -125,6 +127,46 @@ Run the browser suite against a fresh `studio-*-test` Compose project. To includ
 the recovery drills, also set `STUDIO_TEST_COMPOSE_PROJECT` to that project's
 name. The drills temporarily stop its worker and storage and inject failures
 into its test database.
+
+## Local interview rehearsal
+
+Run `pnpm local:init` to add the dedicated `STUDIO_INTERVIEW_SECRET` to an
+existing local environment before rebuilding. Keep the key with the local stack.
+After rotating it, replace the Studio link on each scheduled round and update
+its Teams invitation. Existing invitation secrets cannot be used with the new key.
+
+Use a fresh Compose project and a synthetic password. The seed creates two
+verified panelists with the same display name, an HR account, confirmed candidates
+in two drives, and an overlapping booking. Running the seed twice preserves
+the existing fixture records and round.
+
+```sh
+export STUDIO_PORT=13004 STUDIO_MAILPIT_PORT=18024
+export STUDIO_SEED_INTERVIEW_PASSWORD='A-local-synthetic-password'
+docker compose -p studio-interviews-test up -d --build --wait
+docker compose -p studio-interviews-test exec -e STUDIO_SEED_INTERVIEW_PASSWORD app node apps/server/src/seed.ts
+
+STUDIO_TEST_INTERVIEW_PASSWORD="$STUDIO_SEED_INTERVIEW_PASSWORD" \
+STUDIO_BASE_URL=http://127.0.0.1:13004 \
+STUDIO_TEST_MAILPIT_URL=http://127.0.0.1:18024 \
+pnpm test:browser --workers=1
+```
+
+Open **Interviews** as `slice4-hr@studio.test`. The panelist accounts are
+`slice4-panelist@studio.test` and `slice4-other@studio.test`. Use the synthetic
+password for all three. The browser suite uploads and confirms a new resume,
+books its L1, copies the invitation, verifies a Mailpit code, and closes the
+round from the candidate browser. Set `STUDIO_TEST_INTERVIEW_SCREENSHOTS=1` to
+capture the booking sheet, waiting room, and staff views under `test-results`.
+
+For a shared-host rehearsal, use the configured HTTPS Studio origin and verify
+that both participants can open the full link, including the fragment, from
+an actual Teams invitation. Candidate request limits use the direct socket peer
+by default. If an ingress proxies all requests, set
+`STUDIO_INTERVIEW_TRUSTED_PROXIES` to its exact app-facing IP addresses,
+comma separated. Restrict the app listener to that ingress and configure the
+ingress to overwrite `X-Studio-Client-IP` with a single verified client address
+on every request.
 
 ## Web design system
 

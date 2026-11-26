@@ -7,6 +7,8 @@ import type {
 } from "@studio/contracts";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { z } from "zod";
+import { occupying } from "../interviews/queries.ts";
+import { interviewRound } from "../interviews/schema.ts";
 import { DriveProblem } from "./errors.ts";
 import { candidateView, type Database, skillSet } from "./queries.ts";
 import { driveCandidate, driveSkills } from "./schema.ts";
@@ -105,6 +107,23 @@ export async function changeCandidate(
 				const email = next.email === undefined ? row.email : next.email;
 				if (!(next.name ?? row.name))
 					throw new DriveProblem(400, "invalid_input", { field: "name" });
+				if (row.reviewState === "confirmed" && email !== row.email) {
+					const [booking] = await tx
+						.select({ id: interviewRound.id })
+						.from(interviewRound)
+						.where(
+							and(
+								eq(interviewRound.driveId, driveId),
+								eq(interviewRound.candidateId, id),
+								inArray(interviewRound.state, occupying),
+							),
+						)
+						.limit(1);
+					if (booking)
+						throw new DriveProblem(409, "interview_email_in_use", {
+							field: "email",
+						});
+				}
 				if (!email)
 					throw new DriveProblem(400, "invalid_input", { field: "email" });
 				attemptedEmail = email;
