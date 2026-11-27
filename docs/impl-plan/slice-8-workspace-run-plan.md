@@ -16,4 +16,10 @@ The Compose profile `code-execution` starts the runner on a private network shar
 
 Check three-language success, errors and timeouts, duplicate submissions, access control, result reload, and editing and feedback with execution disabled. Keep pilot execution disabled until isolation and restart checks pass on the target Linux VM.
 
-PostgreSQL integration covered transactional queuing, retry deduplication, and interrupted runs. The candidate browser check covered submitted input and source and output recovery on reload with intercepted run requests. The local Linux runner passed all three starter, input, error, timeout, and isolation checks. Target VM verification and rollout remain pending.
+### Mac verification
+
+The local Compose runner on Colima passed stdin and stdout, runtime error, timeout, and network isolation checks in JavaScript, Java, and Python. The Java compilation error and sandbox wall-time, memory, thread-count, and output limits also passed. The runner had no published ports and the app could not reach its private network.
+
+All 96 tests passed with PostgreSQL, including run deduplication, interrupted run recovery, and the execution-disabled path. Five saved runs survived a local worker restart, and the assigned panelist could reload the same saved result in the Console. The candidate previously confirmed Run and Console on the existing local interview.
+
+Verification is Mac-local for now. Target VM verification and rollout are deferred.
