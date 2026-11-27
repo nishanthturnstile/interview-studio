@@ -10,6 +10,11 @@ import {
 	skillSetSchema,
 } from "./drives.ts";
 import { feedbackReviewDetailSchema } from "./feedback-reviews.ts";
+import {
+	artifactHeadSchema,
+	artifactKindSchema,
+	workspaceHeadIdsSchema,
+} from "./interview-artifacts.ts";
 import type { StaffRole } from "./staff.ts";
 
 export const canManageInterviews = (role: StaffRole) => role === "hr";
@@ -386,7 +391,10 @@ export const candidateInterviewSchema = interviewCore
 		confirmed: z.boolean(),
 	});
 export type CandidateInterview = z.infer<typeof candidateInterviewSchema>;
-export const candidateEndSchema = z.object(change);
+export const candidateEndSchema = z.object({
+	...change,
+	expectedHeads: workspaceHeadIdsSchema.optional(),
+});
 export const interviewCompleteSchema = z.object({ completed: z.literal(true) });
 
 export const interviewConflictSchema = z.object({
@@ -433,8 +441,21 @@ export const interviewErrorSchema = z.object({
 		"unauthenticated",
 		"forbidden",
 		"untrusted_origin",
+		"workspace_binding_changed",
+		"workspace_refresh_required",
+		"workspace_conflict",
+		"workspace_invalid",
+		"workspace_too_large",
+		"workspace_timeout",
+		"workspace_incomplete",
+		"code_run_disabled",
+		"code_run_pending",
+		"code_run_unavailable",
+		"concern_limit",
 	]),
 	field: z.string().optional(),
+	kind: artifactKindSchema.optional(),
+	head: artifactHeadSchema.optional(),
 	preferences: interviewPreferencesSchema.optional(),
 	criteria: skillSetSchema.optional(),
 	assessment: assessmentViewSchema.optional(),

@@ -1,0 +1,9 @@
+.studio-whiteboard .App-toolbar__extra-tools-trigger,
+.studio-whiteboard .App-toolbar__extra-tools-dropdown,
+.studio-whiteboard .layer-ui__library,
+.studio-whiteboard [aria-label="Library"],
+.studio-whiteboard [title="Library"],
+.studio-whiteboard [aria-label="Add link"],
+.studio-whiteboard [aria-label="Edit link"] {
+	display: none;
+}

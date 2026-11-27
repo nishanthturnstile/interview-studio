@@ -1,0 +1,15 @@
+FROM criyle/go-judge:v1.14.1@sha256:da459bed95efca8f322d98598fed5822379b12bf2a0f83c17b34ad55bca19b30 AS judge
+FROM node:26.13.1-bookworm-slim@sha256:0042e17d232a87a2cd485be1da7900fca4d10a4ad11b29e9285da1d2e54798c9 AS node
+FROM eclipse-temurin:25-jdk-noble@sha256:4ddc1a8bdaf283421df5487411aff10b797ccf1e06a339041005114c8f489b5c AS java
+FROM python:3.15.2-slim-trixie@sha256:63bb298d2b7b88f176f51b5189f54ce6535c997682ea70885d2132f5d473a8a5
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=judge /opt/go-judge /usr/local/bin/go-judge
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=java /opt/java/openjdk /usr/local/temurin
+RUN node --version && python3 --version && /usr/local/temurin/bin/java -version
+
+ENTRYPOINT ["/bin/sh", "-ec", "test \"${#ES_AUTH_TOKEN}\" -ge 32; exec go-judge \"$@\"", "go-judge"]
+CMD ["-http-addr=:5050", "-parallelism=1", "-no-fallback", "-silent", "-file-timeout=1m", "-output-limit=1m", "-copy-out-limit=512k", "-tmp-fs-param=size=32m,nr_inodes=1k"]

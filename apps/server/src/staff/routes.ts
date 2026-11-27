@@ -11,6 +11,7 @@ import type { driveRoutes } from "../drives/routes.ts";
 import type { interviewStaffRoutes } from "../interviews/staff-routes.ts";
 import type { createStaffAuth } from "./auth.ts";
 import { getStaff, grantStaffRole, listStaff } from "./roles.ts";
+import type { StaffSessionIdentity } from "./session-access.ts";
 import type { StaffSettings } from "./settings.ts";
 
 const emailActions = new Set([
@@ -34,7 +35,9 @@ export function staffRoutes(
 	drives?: ReturnType<typeof driveRoutes>,
 	interviews?: ReturnType<typeof interviewStaffRoutes>,
 ) {
-	const app = new Hono<{ Variables: { staff: StaffIdentity } }>();
+	const app = new Hono<{
+		Variables: { staff: StaffIdentity; staffSession: StaffSessionIdentity };
+	}>();
 	// This stack runs a single app process. Serialize sign-in with password resets
 	// so a sign-in that checked an old password cannot create a session after revocation.
 	let credentialQueue = Promise.resolve();
@@ -142,6 +145,10 @@ export function staffRoutes(
 		const staff = await getStaff(database, session.user.id, settings.domains);
 		if (!staff) return c.json({ error: "forbidden" }, 403);
 		c.set("staff", staff);
+		c.set("staffSession", {
+			userId: session.user.id,
+			sessionId: session.session.id,
+		});
 		await next();
 	});
 	app.get("/api/staff/me", (c) => c.json(c.get("staff")));

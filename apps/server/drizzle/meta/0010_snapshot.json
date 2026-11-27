@@ -1,0 +1,3510 @@
+{
+  "id": "bdd2285e-c865-4e2d-822f-952afa849eb7",
+  "prevId": "c4849954-b6d2-4246-8e2a-536c46cdd1e9",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.smoke_fixture": {
+      "name": "smoke_fixture",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.worker_heartbeat": {
+      "name": "worker_heartbeat",
+      "schema": "",
+      "columns": {
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "seen_at": {
+          "name": "seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.drive": {
+      "name": "drive",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_key": {
+          "name": "client_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "jd_revision": {
+          "name": "jd_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "jd_text": {
+          "name": "jd_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active_jd_id": {
+          "name": "active_jd_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "drive_order": {
+          "name": "drive_order",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "drive_created_by_user_id_fk": {
+          "name": "drive_created_by_user_id_fk",
+          "tableFrom": "drive",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "drive_active_jd_fk": {
+          "name": "drive_active_jd_fk",
+          "tableFrom": "drive",
+          "tableTo": "drive_document",
+          "columnsFrom": [
+            "id",
+            "active_jd_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "drive_creator_client_key": {
+          "name": "drive_creator_client_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "created_by",
+            "client_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.drive_candidate": {
+      "name": "drive_candidate",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "experience_tenths": {
+          "name": "experience_tenths",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "review_state": {
+          "name": "review_state",
+          "type": "drive_candidate_review",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "duplicate_of": {
+          "name": "duplicate_of",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "drive_candidate_order": {
+          "name": "drive_candidate_order",
+          "columns": [
+            {
+              "expression": "drive_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "drive_candidate_confirmed_email": {
+          "name": "drive_candidate_confirmed_email",
+          "columns": [
+            {
+              "expression": "drive_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"drive_candidate\".\"review_state\" = 'confirmed'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "drive_candidate_drive_id_drive_id_fk": {
+          "name": "drive_candidate_drive_id_drive_id_fk",
+          "tableFrom": "drive_candidate",
+          "tableTo": "drive",
+          "columnsFrom": [
+            "drive_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "drive_candidate_source_fk": {
+          "name": "drive_candidate_source_fk",
+          "tableFrom": "drive_candidate",
+          "tableTo": "drive_document",
+          "columnsFrom": [
+            "drive_id",
+            "source_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "drive_candidate_duplicate_fk": {
+          "name": "drive_candidate_duplicate_fk",
+          "tableFrom": "drive_candidate",
+          "tableTo": "drive_candidate",
+          "columnsFrom": [
+            "drive_id",
+            "duplicate_of"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "drive_candidate_source_id_unique": {
+          "name": "drive_candidate_source_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "source_id"
+          ]
+        },
+        "drive_candidate_scope": {
+          "name": "drive_candidate_scope",
+          "nullsNotDistinct": false,
+          "columns": [
+            "drive_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "drive_candidate_email_normalized": {
+          "name": "drive_candidate_email_normalized",
+          "value": "\"drive_candidate\".\"email\" = lower(btrim(\"drive_candidate\".\"email\"))"
+        },
+        "drive_candidate_confirmed_required": {
+          "name": "drive_candidate_confirmed_required",
+          "value": "\"drive_candidate\".\"review_state\" <> 'confirmed' or (\"drive_candidate\".\"email\" is not null and length(btrim(\"drive_candidate\".\"name\")) > 0)"
+        },
+        "drive_candidate_duplicate_required": {
+          "name": "drive_candidate_duplicate_required",
+          "value": "(\"drive_candidate\".\"review_state\" = 'duplicate') = (\"drive_candidate\".\"duplicate_of\" is not null) and \"drive_candidate\".\"duplicate_of\" is distinct from \"drive_candidate\".\"id\""
+        },
+        "drive_candidate_years": {
+          "name": "drive_candidate_years",
+          "value": "\"drive_candidate\".\"experience_tenths\" between 0 and 800"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.drive_document": {
+      "name": "drive_document",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "drive_document_kind",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "uploaded_by": {
+          "name": "uploaded_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "client_key": {
+          "name": "client_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "filename": {
+          "name": "filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "declared_type": {
+          "name": "declared_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "media_type": {
+          "name": "media_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "size": {
+          "name": "size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_key": {
+          "name": "object_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "jd_revision": {
+          "name": "jd_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "deadline": {
+          "name": "deadline",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "upload_state": {
+          "name": "upload_state",
+          "type": "drive_upload_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "cleanup_after": {
+          "name": "cleanup_after",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cleanup_deleted_at": {
+          "name": "cleanup_deleted_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parse_state": {
+          "name": "parse_state",
+          "type": "drive_parse_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parse_claim": {
+          "name": "parse_claim",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parse_attempts": {
+          "name": "parse_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "parse_failure": {
+          "name": "parse_failure",
+          "type": "drive_parse_failure",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parse_after": {
+          "name": "parse_after",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "suggestions": {
+          "name": "suggestions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "extracted_text": {
+          "name": "extracted_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "used_ocr": {
+          "name": "used_ocr",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "drive_document_order": {
+          "name": "drive_document_order",
+          "columns": [
+            {
+              "expression": "drive_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "drive_document_pending": {
+          "name": "drive_document_pending",
+          "columns": [
+            {
+              "expression": "upload_state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "parse_state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "deadline",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "drive_document_cleanup": {
+          "name": "drive_document_cleanup",
+          "columns": [
+            {
+              "expression": "cleanup_after",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"drive_document\".\"cleanup_after\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "drive_document_reconcile": {
+          "name": "drive_document_reconcile",
+          "columns": [
+            {
+              "expression": "parse_after",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"drive_document\".\"parse_after\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "drive_document_drive_id_drive_id_fk": {
+          "name": "drive_document_drive_id_drive_id_fk",
+          "tableFrom": "drive_document",
+          "tableTo": "drive",
+          "columnsFrom": [
+            "drive_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "drive_document_uploaded_by_user_id_fk": {
+          "name": "drive_document_uploaded_by_user_id_fk",
+          "tableFrom": "drive_document",
+          "tableTo": "user",
+          "columnsFrom": [
+            "uploaded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "drive_document_object_key_unique": {
+          "name": "drive_document_object_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "object_key"
+          ]
+        },
+        "drive_document_scope": {
+          "name": "drive_document_scope",
+          "nullsNotDistinct": false,
+          "columns": [
+            "drive_id",
+            "id"
+          ]
+        },
+        "drive_document_client_key": {
+          "name": "drive_document_client_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "uploaded_by",
+            "drive_id",
+            "kind",
+            "client_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "drive_document_size": {
+          "name": "drive_document_size",
+          "value": "\"drive_document\".\"size\" between 1 and 10485760"
+        },
+        "drive_document_key_prefix": {
+          "name": "drive_document_key_prefix",
+          "value": "\"drive_document\".\"object_key\" like 'drive-uploads/%'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.drive_skills": {
+      "name": "drive_skills",
+      "schema": "",
+      "columns": {
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "round": {
+          "name": "round",
+          "type": "drive_round",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "skills": {
+          "name": "skills",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "drive_skills_drive_id_drive_id_fk": {
+          "name": "drive_skills_drive_id_drive_id_fk",
+          "tableFrom": "drive_skills",
+          "tableTo": "drive",
+          "columnsFrom": [
+            "drive_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "drive_skills_reviewed_by_user_id_fk": {
+          "name": "drive_skills_reviewed_by_user_id_fk",
+          "tableFrom": "drive_skills",
+          "tableTo": "user",
+          "columnsFrom": [
+            "reviewed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "drive_skills_drive_id_round_pk": {
+          "name": "drive_skills_drive_id_round_pk",
+          "columns": [
+            "drive_id",
+            "round"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_artifact_head": {
+      "name": "interview_artifact_head",
+      "schema": "",
+      "columns": {
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "interview_artifact_kind",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision_id": {
+          "name": "revision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_artifact_head_revision_fk": {
+          "name": "interview_artifact_head_revision_fk",
+          "tableFrom": "interview_artifact_head",
+          "tableTo": "interview_artifact_revision",
+          "columnsFrom": [
+            "round_id",
+            "kind",
+            "revision_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "kind",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "interview_artifact_head_round_id_kind_pk": {
+          "name": "interview_artifact_head_round_id_kind_pk",
+          "columns": [
+            "round_id",
+            "kind"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_artifact_revision": {
+      "name": "interview_artifact_revision",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "interview_artifact_kind",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_session_id": {
+          "name": "author_session_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "saved_at": {
+          "name": "saved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_artifact_revision_round_id_interview_round_id_fk": {
+          "name": "interview_artifact_revision_round_id_interview_round_id_fk",
+          "tableFrom": "interview_artifact_revision",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_artifact_revision_author_session_id_interview_session_id_fk": {
+          "name": "interview_artifact_revision_author_session_id_interview_session_id_fk",
+          "tableFrom": "interview_artifact_revision",
+          "tableTo": "interview_session",
+          "columnsFrom": [
+            "author_session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_artifact_sequence_unique": {
+          "name": "interview_artifact_sequence_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "kind",
+            "sequence"
+          ]
+        },
+        "interview_artifact_revision_scope_unique": {
+          "name": "interview_artifact_revision_scope_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "kind",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "interview_artifact_sequence_positive": {
+          "name": "interview_artifact_sequence_positive",
+          "value": "\"interview_artifact_revision\".\"sequence\" > 0"
+        },
+        "interview_artifact_schema_positive": {
+          "name": "interview_artifact_schema_positive",
+          "value": "\"interview_artifact_revision\".\"schema_version\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_assessment": {
+      "name": "interview_assessment",
+      "schema": "",
+      "columns": {
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "criteria": {
+          "name": "criteria",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "draft": {
+          "name": "draft",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"questions\":[],\"notes\":\"\",\"ratings\":[],\"decision\":null,\"rationale\":\"\"}'::jsonb"
+        },
+        "draft_revision": {
+          "name": "draft_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "draft_updated_at": {
+          "name": "draft_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_assessment_round_id_interview_round_id_fk": {
+          "name": "interview_assessment_round_id_interview_round_id_fk",
+          "tableFrom": "interview_assessment",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_assessment_version": {
+      "name": "interview_assessment_version",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_version_id": {
+          "name": "previous_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_l1_version_id": {
+          "name": "reviewed_l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decision": {
+          "name": "decision",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ratings": {
+          "name": "ratings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rationale": {
+          "name": "rationale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correction_reason": {
+          "name": "correction_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_assessment_version_round_id_interview_assessment_round_id_fk": {
+          "name": "interview_assessment_version_round_id_interview_assessment_round_id_fk",
+          "tableFrom": "interview_assessment_version",
+          "tableTo": "interview_assessment",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "round_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_assessment_version_reviewed_l1_version_id_interview_assessment_version_id_fk": {
+          "name": "interview_assessment_version_reviewed_l1_version_id_interview_assessment_version_id_fk",
+          "tableFrom": "interview_assessment_version",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "reviewed_l1_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_assessment_version_author_id_user_id_fk": {
+          "name": "interview_assessment_version_author_id_user_id_fk",
+          "tableFrom": "interview_assessment_version",
+          "tableTo": "user",
+          "columnsFrom": [
+            "author_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_assessment_previous_version_fk": {
+          "name": "interview_assessment_previous_version_fk",
+          "tableFrom": "interview_assessment_version",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "round_id",
+            "previous_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_assessment_version_number": {
+          "name": "interview_assessment_version_number",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "version"
+          ]
+        },
+        "interview_assessment_version_scope": {
+          "name": "interview_assessment_version_scope",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "interview_assessment_version_chain": {
+          "name": "interview_assessment_version_chain",
+          "value": "(\"interview_assessment_version\".\"version\" = 1 and \"interview_assessment_version\".\"previous_version_id\" is null and \"interview_assessment_version\".\"correction_reason\" is null) or (\"interview_assessment_version\".\"version\" > 1 and \"interview_assessment_version\".\"previous_version_id\" is not null and length(btrim(\"interview_assessment_version\".\"correction_reason\")) > 0 and \"interview_assessment_version\".\"correction_reason\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_attendance": {
+      "name": "interview_attendance",
+      "schema": "",
+      "columns": {
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "experience_tenths": {
+          "name": "experience_tenths",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_attendance_round_id_interview_round_id_fk": {
+          "name": "interview_attendance_round_id_interview_round_id_fk",
+          "tableFrom": "interview_attendance",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_challenge": {
+      "name": "interview_challenge",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "invitation_id": {
+          "name": "invitation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code_digest": {
+          "name": "code_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phase": {
+          "name": "phase",
+          "type": "interview_challenge_phase",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "interview_challenge_budget": {
+          "name": "interview_challenge_budget",
+          "columns": [
+            {
+              "expression": "invitation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interview_challenge_expiry": {
+          "name": "interview_challenge_expiry",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interview_challenge_current": {
+          "name": "interview_challenge_current",
+          "columns": [
+            {
+              "expression": "invitation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"interview_challenge\".\"revoked_at\" is null and \"interview_challenge\".\"consumed_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_challenge_invitation_id_interview_invitation_id_fk": {
+          "name": "interview_challenge_invitation_id_interview_invitation_id_fk",
+          "tableFrom": "interview_challenge",
+          "tableTo": "interview_invitation",
+          "columnsFrom": [
+            "invitation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "interview_challenge_attempts": {
+          "name": "interview_challenge_attempts",
+          "value": "\"interview_challenge\".\"attempts\" between 0 and 5"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_concern": {
+      "name": "interview_concern",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command_id": {
+          "name": "command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observation": {
+          "name": "observation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "context": {
+          "name": "context",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_concern_round_id_interview_round_id_fk": {
+          "name": "interview_concern_round_id_interview_round_id_fk",
+          "tableFrom": "interview_concern",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_concern_author_id_user_id_fk": {
+          "name": "interview_concern_author_id_user_id_fk",
+          "tableFrom": "interview_concern",
+          "tableTo": "user",
+          "columnsFrom": [
+            "author_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_concern_command_unique": {
+          "name": "interview_concern_command_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "author_id",
+            "command_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_event": {
+      "name": "interview_event",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_id": {
+          "name": "candidate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor": {
+          "name": "actor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "assessment_version_id": {
+          "name": "assessment_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "feedback_review_id": {
+          "name": "feedback_review_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "interview_event_round": {
+          "name": "interview_event_round",
+          "columns": [
+            {
+              "expression": "round_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_event_round_id_interview_round_id_fk": {
+          "name": "interview_event_round_id_interview_round_id_fk",
+          "tableFrom": "interview_event",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_event_assessment_version_id_interview_assessment_version_id_fk": {
+          "name": "interview_event_assessment_version_id_interview_assessment_version_id_fk",
+          "tableFrom": "interview_event",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "assessment_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_event_feedback_review_id_interview_feedback_review_id_fk": {
+          "name": "interview_event_feedback_review_id_interview_feedback_review_id_fk",
+          "tableFrom": "interview_event",
+          "tableTo": "interview_feedback_review",
+          "columnsFrom": [
+            "feedback_review_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_event_candidacy_fk": {
+          "name": "interview_event_candidacy_fk",
+          "tableFrom": "interview_event",
+          "tableTo": "drive_candidate",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_feedback_review": {
+      "name": "interview_feedback_review",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_id": {
+          "name": "candidate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "interview_feedback_review_kind",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "l1_round_id": {
+          "name": "l1_round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_l1_version_id": {
+          "name": "previous_l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "trigger_l1_version_id": {
+          "name": "trigger_l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "affected_l2_round_id": {
+          "name": "affected_l2_round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "affected_l2_version_id": {
+          "name": "affected_l2_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_by": {
+          "name": "resolved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_action": {
+          "name": "resolution_action",
+          "type": "interview_feedback_resolution_action",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_outcome": {
+          "name": "resolution_outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "applied_l1_version_id": {
+          "name": "applied_l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reinstated_l2_version_id": {
+          "name": "reinstated_l2_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "read_by": {
+          "name": "read_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "feedback_review_one_open": {
+          "name": "feedback_review_one_open",
+          "columns": [
+            {
+              "expression": "drive_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "candidate_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"interview_feedback_review\".\"kind\" = 'pass_reversed' and \"interview_feedback_review\".\"resolved_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "feedback_review_inbox": {
+          "name": "feedback_review_inbox",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "(\"interview_feedback_review\".\"kind\" = 'pass_reversed' and \"interview_feedback_review\".\"resolved_at\" is null) or (\"interview_feedback_review\".\"kind\" = 'handoff_updated' and \"interview_feedback_review\".\"read_at\" is null)",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_feedback_review_resolved_by_user_id_fk": {
+          "name": "interview_feedback_review_resolved_by_user_id_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "user",
+          "columnsFrom": [
+            "resolved_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_feedback_review_read_by_user_id_fk": {
+          "name": "interview_feedback_review_read_by_user_id_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "user",
+          "columnsFrom": [
+            "read_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_l1_round_scope_fk": {
+          "name": "feedback_review_l1_round_scope_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id",
+            "l1_round_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "candidate_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_l2_round_scope_fk": {
+          "name": "feedback_review_l2_round_scope_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id",
+            "affected_l2_round_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "candidate_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_previous_l1_fk": {
+          "name": "feedback_review_previous_l1_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "l1_round_id",
+            "previous_l1_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_trigger_l1_fk": {
+          "name": "feedback_review_trigger_l1_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "l1_round_id",
+            "trigger_l1_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_affected_l2_fk": {
+          "name": "feedback_review_affected_l2_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "affected_l2_round_id",
+            "affected_l2_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_applied_l1_fk": {
+          "name": "feedback_review_applied_l1_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "l1_round_id",
+            "applied_l1_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "feedback_review_reinstated_l2_fk": {
+          "name": "feedback_review_reinstated_l2_fk",
+          "tableFrom": "interview_feedback_review",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "affected_l2_round_id",
+            "reinstated_l2_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_feedback_review_trigger_l1_version_id_unique": {
+          "name": "interview_feedback_review_trigger_l1_version_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "trigger_l1_version_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "feedback_review_resolution_fields": {
+          "name": "feedback_review_resolution_fields",
+          "value": "\n\t\t(\"interview_feedback_review\".\"resolved_at\" is null and \"interview_feedback_review\".\"resolved_by\" is null and \"interview_feedback_review\".\"resolution_action\" is null and \"interview_feedback_review\".\"resolution_outcome\" is null and \"interview_feedback_review\".\"resolution_reason\" is null and \"interview_feedback_review\".\"applied_l1_version_id\" is null and \"interview_feedback_review\".\"reinstated_l2_version_id\" is null)\n\t\tor (\"interview_feedback_review\".\"kind\" = 'pass_reversed' and \"interview_feedback_review\".\"resolved_at\" is not null and \"interview_feedback_review\".\"resolved_by\" is not null and \"interview_feedback_review\".\"resolution_action\" is not null and \"interview_feedback_review\".\"resolution_outcome\" is not null and \"interview_feedback_review\".\"resolution_reason\" is not null and \"interview_feedback_review\".\"applied_l1_version_id\" is not null and ((\"interview_feedback_review\".\"resolution_action\" = 'reinstate_l2') = (\"interview_feedback_review\".\"reinstated_l2_version_id\" is not null)))"
+        },
+        "feedback_review_acknowledgment_fields": {
+          "name": "feedback_review_acknowledgment_fields",
+          "value": "(\"interview_feedback_review\".\"read_at\" is null and \"interview_feedback_review\".\"read_by\" is null) or (\"interview_feedback_review\".\"kind\" = 'handoff_updated' and \"interview_feedback_review\".\"read_at\" is not null and \"interview_feedback_review\".\"read_by\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_invitation": {
+      "name": "interview_invitation",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "secret_hash": {
+          "name": "secret_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "generation": {
+          "name": "generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "interview_invitation_current": {
+          "name": "interview_invitation_current",
+          "columns": [
+            {
+              "expression": "round_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"interview_invitation\".\"revoked_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_invitation_round_id_interview_round_id_fk": {
+          "name": "interview_invitation_round_id_interview_round_id_fk",
+          "tableFrom": "interview_invitation",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "round_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_invitation_generation": {
+          "name": "interview_invitation_generation",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "generation"
+          ]
+        },
+        "interview_invitation_scope": {
+          "name": "interview_invitation_scope",
+          "nullsNotDistinct": false,
+          "columns": [
+            "round_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_preference": {
+      "name": "interview_preference",
+      "schema": "",
+      "columns": {
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration": {
+          "name": "duration",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_preference_staff_id_user_id_fk": {
+          "name": "interview_preference_staff_id_user_id_fk",
+          "tableFrom": "interview_preference",
+          "tableTo": "user",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "interview_preference_duration": {
+          "name": "interview_preference_duration",
+          "value": "\"interview_preference\".\"duration\" between 5 and 480"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_progress": {
+      "name": "interview_progress",
+      "schema": "",
+      "columns": {
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_id": {
+          "name": "candidate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "l1_version_id": {
+          "name": "l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "current_l2_round_id": {
+          "name": "current_l2_round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_progress_l1_version_id_interview_assessment_version_id_fk": {
+          "name": "interview_progress_l1_version_id_interview_assessment_version_id_fk",
+          "tableFrom": "interview_progress",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "l1_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_progress_candidacy_fk": {
+          "name": "interview_progress_candidacy_fk",
+          "tableFrom": "interview_progress",
+          "tableTo": "drive_candidate",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_progress_current_l2_fk": {
+          "name": "interview_progress_current_l2_fk",
+          "tableFrom": "interview_progress",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id",
+            "current_l2_round_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "candidate_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "interview_progress_drive_id_candidate_id_pk": {
+          "name": "interview_progress_drive_id_candidate_id_pk",
+          "columns": [
+            "drive_id",
+            "candidate_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_rate_limit": {
+      "name": "interview_rate_limit",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "window_start": {
+          "name": "window_start",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_receipt": {
+      "name": "interview_receipt",
+      "schema": "",
+      "columns": {
+        "actor": {
+          "name": "actor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "command_id": {
+          "name": "command_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_id": {
+          "name": "resource_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "interview_receipt_actor_actor_id_command_id_pk": {
+          "name": "interview_receipt_actor_actor_id_command_id_pk",
+          "columns": [
+            "actor",
+            "actor_id",
+            "command_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_round": {
+      "name": "interview_round",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_id": {
+          "name": "candidate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "level": {
+          "name": "level",
+          "type": "drive_round",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "panelist_id": {
+          "name": "panelist_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invited_email": {
+          "name": "invited_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_name": {
+          "name": "candidate_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "experience_tenths": {
+          "name": "experience_tenths",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration": {
+          "name": "duration",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting": {
+          "name": "meeting",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "interview_state",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'scheduled'"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_by": {
+          "name": "started_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancellation_code": {
+          "name": "cancellation_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "legacy_assessment": {
+          "name": "legacy_assessment",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "qualifying_l1_round_id": {
+          "name": "qualifying_l1_round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "qualifying_l1_version_id": {
+          "name": "qualifying_l1_version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "absent": {
+          "name": "absent",
+          "type": "interview_absent_party",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "interview_round_unresolved": {
+          "name": "interview_round_unresolved",
+          "columns": [
+            {
+              "expression": "drive_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "candidate_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"interview_round\".\"state\" in ('scheduled', 'active', 'awaiting_feedback')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interview_round_panelist_time": {
+          "name": "interview_round_panelist_time",
+          "columns": [
+            {
+              "expression": "panelist_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ends_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "interview_round_email_time": {
+          "name": "interview_round_email_time",
+          "columns": [
+            {
+              "expression": "invited_email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ends_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_round_panelist_id_user_id_fk": {
+          "name": "interview_round_panelist_id_user_id_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "user",
+          "columnsFrom": [
+            "panelist_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_round_created_by_user_id_fk": {
+          "name": "interview_round_created_by_user_id_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "user",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_round_started_by_user_id_fk": {
+          "name": "interview_round_started_by_user_id_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "user",
+          "columnsFrom": [
+            "started_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_round_candidacy_fk": {
+          "name": "interview_round_candidacy_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "drive_candidate",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_round_qualifying_l1_candidacy_fk": {
+          "name": "interview_round_qualifying_l1_candidacy_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "interview_round",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id",
+            "qualifying_l1_round_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "candidate_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_round_qualifying_l1_version_fk": {
+          "name": "interview_round_qualifying_l1_version_fk",
+          "tableFrom": "interview_round",
+          "tableTo": "interview_assessment_version",
+          "columnsFrom": [
+            "qualifying_l1_round_id",
+            "qualifying_l1_version_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_round_attempt": {
+          "name": "interview_round_attempt",
+          "nullsNotDistinct": false,
+          "columns": [
+            "drive_id",
+            "candidate_id",
+            "level",
+            "attempt"
+          ]
+        },
+        "interview_round_scope": {
+          "name": "interview_round_scope",
+          "nullsNotDistinct": false,
+          "columns": [
+            "drive_id",
+            "candidate_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "interview_round_l1_qualification": {
+          "name": "interview_round_l1_qualification",
+          "value": "(\"interview_round\".\"qualifying_l1_round_id\" is null and \"interview_round\".\"qualifying_l1_version_id\" is null) or (\"interview_round\".\"level\" = 'l2' and \"interview_round\".\"qualifying_l1_round_id\" is not null and \"interview_round\".\"qualifying_l1_version_id\" is not null)"
+        },
+        "interview_round_slot": {
+          "name": "interview_round_slot",
+          "value": "\"interview_round\".\"duration\" between 5 and 480 and \"interview_round\".\"ends_at\" = \"interview_round\".\"starts_at\" + \"interview_round\".\"duration\" * interval '1 minute'"
+        },
+        "interview_round_attempt_positive": {
+          "name": "interview_round_attempt_positive",
+          "value": "\"interview_round\".\"attempt\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.interview_session": {
+      "name": "interview_session",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "round_id": {
+          "name": "round_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invitation_id": {
+          "name": "invitation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "admitted_at": {
+          "name": "admitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "interview_session_current": {
+          "name": "interview_session_current",
+          "columns": [
+            {
+              "expression": "round_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"interview_session\".\"revoked_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "interview_session_invitation_fk": {
+          "name": "interview_session_invitation_fk",
+          "tableFrom": "interview_session",
+          "tableTo": "interview_invitation",
+          "columnsFrom": [
+            "round_id",
+            "invitation_id"
+          ],
+          "columnsTo": [
+            "round_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "interview_session_token_hash_unique": {
+          "name": "interview_session_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_hash"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.interview_withdrawal": {
+      "name": "interview_withdrawal",
+      "schema": "",
+      "columns": {
+        "drive_id": {
+          "name": "drive_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_id": {
+          "name": "candidate_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interview_withdrawal_staff_id_user_id_fk": {
+          "name": "interview_withdrawal_staff_id_user_id_fk",
+          "tableFrom": "interview_withdrawal",
+          "tableTo": "user",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "interview_withdrawal_candidacy_fk": {
+          "name": "interview_withdrawal_candidacy_fk",
+          "tableFrom": "interview_withdrawal",
+          "tableTo": "drive_candidate",
+          "columnsFrom": [
+            "drive_id",
+            "candidate_id"
+          ],
+          "columnsTo": [
+            "drive_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "interview_withdrawal_drive_id_candidate_id_pk": {
+          "name": "interview_withdrawal_drive_id_candidate_id_pk",
+          "columns": [
+            "drive_id",
+            "candidate_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.account": {
+      "name": "account",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_id": {
+          "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "access_token": {
+          "name": "access_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_token": {
+          "name": "id_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "access_token_expires_at": {
+          "name": "access_token_expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token_expires_at": {
+          "name": "refresh_token_expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "account_userId_idx": {
+          "name": "account_userId_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "account_user_id_user_id_fk": {
+          "name": "account_user_id_user_id_fk",
+          "tableFrom": "account",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.session": {
+      "name": "session",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "session_userId_idx": {
+          "name": "session_userId_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "session_user_id_user_id_fk": {
+          "name": "session_user_id_user_id_fk",
+          "tableFrom": "session",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "session_token_unique": {
+          "name": "session_token_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user": {
+      "name": "user",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_verified": {
+          "name": "email_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "image": {
+          "name": "image",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "user_email_unique": {
+          "name": "user_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.verification": {
+      "name": "verification",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "verification_identifier_idx": {
+          "name": "verification_identifier_idx",
+          "columns": [
+            {
+              "expression": "identifier",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.staff_director_bootstrap": {
+      "name": "staff_director_bootstrap",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "staff_director_bootstrap_user_id_user_id_fk": {
+          "name": "staff_director_bootstrap_user_id_user_id_fk",
+          "tableFrom": "staff_director_bootstrap",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "staff_director_bootstrap_singleton": {
+          "name": "staff_director_bootstrap_singleton",
+          "value": "\"staff_director_bootstrap\".\"id\" = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.staff_grant": {
+      "name": "staff_grant",
+      "schema": "",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "staff_role",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "granted_by": {
+          "name": "granted_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "granted_at": {
+          "name": "granted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "staff_grant_user_id_user_id_fk": {
+          "name": "staff_grant_user_id_user_id_fk",
+          "tableFrom": "staff_grant",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "staff_grant_granted_by_user_id_fk": {
+          "name": "staff_grant_granted_by_user_id_fk",
+          "tableFrom": "staff_grant",
+          "tableTo": "user",
+          "columnsFrom": [
+            "granted_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.drive_document_kind": {
+      "name": "drive_document_kind",
+      "schema": "public",
+      "values": [
+        "job_description",
+        "resume"
+      ]
+    },
+    "public.drive_parse_failure": {
+      "name": "drive_parse_failure",
+      "schema": "public",
+      "values": [
+        "scan_only",
+        "invalid_document",
+        "resource_limit",
+        "infrastructure_exhausted"
+      ]
+    },
+    "public.drive_parse_state": {
+      "name": "drive_parse_state",
+      "schema": "public",
+      "values": [
+        "queued",
+        "processing",
+        "succeeded",
+        "needs_manual_review"
+      ]
+    },
+    "public.drive_candidate_review": {
+      "name": "drive_candidate_review",
+      "schema": "public",
+      "values": [
+        "draft",
+        "confirmed",
+        "duplicate"
+      ]
+    },
+    "public.drive_round": {
+      "name": "drive_round",
+      "schema": "public",
+      "values": [
+        "l1",
+        "l2"
+      ]
+    },
+    "public.drive_upload_state": {
+      "name": "drive_upload_state",
+      "schema": "public",
+      "values": [
+        "pending",
+        "stored",
+        "failed",
+        "retired",
+        "cleanup"
+      ]
+    },
+    "public.interview_challenge_phase": {
+      "name": "interview_challenge_phase",
+      "schema": "public",
+      "values": [
+        "pending",
+        "sent",
+        "failed"
+      ]
+    },
+    "public.interview_feedback_resolution_action": {
+      "name": "interview_feedback_resolution_action",
+      "schema": "public",
+      "values": [
+        "apply_l1",
+        "reinstate_l2",
+        "rebook_l2"
+      ]
+    },
+    "public.interview_feedback_review_kind": {
+      "name": "interview_feedback_review_kind",
+      "schema": "public",
+      "values": [
+        "pass_reversed",
+        "handoff_updated"
+      ]
+    },
+    "public.interview_artifact_kind": {
+      "name": "interview_artifact_kind",
+      "schema": "public",
+      "values": [
+        "code",
+        "board"
+      ]
+    },
+    "public.interview_state": {
+      "name": "interview_state",
+      "schema": "public",
+      "values": [
+        "scheduled",
+        "active",
+        "awaiting_feedback",
+        "feedback_submitted",
+        "cancelled",
+        "no_show",
+        "withdrawn"
+      ]
+    },
+    "public.interview_absent_party": {
+      "name": "interview_absent_party",
+      "schema": "public",
+      "values": [
+        "candidate",
+        "panelist",
+        "both"
+      ]
+    },
+    "public.staff_role": {
+      "name": "staff_role",
+      "schema": "public",
+      "values": [
+        "panelist",
+        "hr",
+        "director"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

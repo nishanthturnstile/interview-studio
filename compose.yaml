@@ -71,6 +71,7 @@ services:
       STUDIO_AUTH_ALLOW_LOOPBACK: ${STUDIO_AUTH_ALLOW_LOOPBACK:-true}
       STUDIO_INTERVIEW_TRUSTED_PROXIES: ${STUDIO_INTERVIEW_TRUSTED_PROXIES:-}
       STUDIO_INTERVIEW_SECRET: ${STUDIO_INTERVIEW_SECRET:?Run pnpm local:init}
+      STUDIO_CODE_EXECUTION_ENABLED: ${STUDIO_CODE_EXECUTION_ENABLED:-false}
       STUDIO_AUTH_SECRET: ${STUDIO_AUTH_SECRET:?Run pnpm local:init}
       STUDIO_STAFF_DOMAINS: ${STUDIO_STAFF_DOMAINS:-studio.test}
       STUDIO_DIRECTOR_EMAIL: ${STUDIO_DIRECTOR_EMAIL:-director@studio.test}
@@ -106,11 +107,34 @@ services:
       <<: [*database-env, *storage-env]
       STUDIO_S3_KEY: ${STUDIO_WORKER_S3_KEY:?Run pnpm local:init}
       STUDIO_S3_SECRET: ${STUDIO_WORKER_S3_SECRET:?Run pnpm local:init}
+      STUDIO_CODE_EXECUTION_ENABLED: ${STUDIO_CODE_EXECUTION_ENABLED:-false}
+      STUDIO_GO_JUDGE_URL: ${STUDIO_GO_JUDGE_URL:-http://runner:5050}
+      STUDIO_GO_JUDGE_TOKEN: ${STUDIO_GO_JUDGE_TOKEN:-}
+    networks:
+      - default
+      - code-runner
     depends_on:
       migrate:
         condition: service_completed_successfully
       storage:
         condition: service_started
+
+  runner:
+    profiles: [code-execution]
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    privileged: true
+    shm_size: 64m
+    mem_limit: 512m
+    environment:
+      ES_AUTH_TOKEN: ${STUDIO_GO_JUDGE_TOKEN:-}
+    networks:
+      - code-runner
+
+networks:
+  code-runner:
+    internal: true
 
 configs:
   s3-identities:

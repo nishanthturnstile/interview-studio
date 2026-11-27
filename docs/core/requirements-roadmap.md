@@ -58,7 +58,7 @@ closure is part of the Slice 7 transport work.
 
 ## 7. Add the live editor and whiteboard
 
-- Load CodeMirror and Excalidraw on the interview screen. The candidate edits single-file code or draws with freehand strokes, shapes, text, erase, and undo. The assigned panelist follows read-only. Teams handles the virtual call and screen sharing. Let panelists record a concern with context in virtual rounds and ordinary notes in person.
+- Load CodeMirror and Excalidraw on the interview screen. The candidate edits single-file code or draws with freehand strokes, shapes, text, erase, and undo. Offer JavaScript, Java, and Python with Hello World starters and separate saved drafts. The assigned panelist follows read-only. Both participants can open Code or Whiteboard full screen. Teams handles the virtual call and screen sharing. Let panelists record a concern with context in virtual rounds and ordinary notes in person.
 - Autosave revisions in PostgreSQL, acknowledge committed saves, and send authorized updates over WebSocket. Restore the current revision on reconnect. Give each saved revision a stable ID so slice 10 can retain the exact revision cited by an assessment. Save pending edits before candidate-confirmed closure. Remote closure preserves the last acknowledged revision.
 
 - [ ] **Done when** a candidate can edit on Windows while a panelist follows on Mac, a refresh restores code and drawings, a stale tab cannot overwrite newer work, and a closed candidate session cannot retrieve an artifact.

@@ -1,5 +1,6 @@
 import {
 	acknowledgeFeedbackReviewSchema,
+	artifactSnapshotSchema,
 	assessmentVersionDetailSchema,
 	assessmentVersionListSchema,
 	assessmentViewSchema,
@@ -8,6 +9,9 @@ import {
 	bookInterviewSchema,
 	canManageInterviews,
 	canViewAssignedInterviews,
+	codeRunOutputSchema,
+	concernEntrySchema,
+	concernViewSchema,
 	correctAssessmentSchema,
 	directorReportQuerySchema,
 	eligibleInterviewCandidateSchema,
@@ -31,13 +35,17 @@ import {
 	resolveFeedbackReviewSchema,
 	type StaffIdentity,
 	saveAssessmentDraftSchema,
+	saveConcernSchema,
 	submitAssessmentSchema,
 	withdrawCandidacySchema,
+	workspaceBindingHeader,
+	workspaceDescriptorSchema,
 } from "@studio/contracts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { logger } from "../logger.ts";
+import type { StaffSessionIdentity } from "../staff/session-access.ts";
 import {
 	changeAssessment,
 	correctAssessment,
@@ -46,6 +54,7 @@ import {
 	getHrAssessment,
 	listAssessmentVersions,
 } from "./assessments.ts";
+import { readConcerns, saveConcern } from "./concerns.ts";
 import {
 	listDirectorScorecards,
 	readDirectorReport,
@@ -55,7 +64,7 @@ import {
 	getFeedbackReview,
 	listFeedbackReviews,
 } from "./feedback-reviews.ts";
-import { readBody, uuidParam } from "./http.ts";
+import { artifactKind, readBody, uuidParam } from "./http.ts";
 import { InterviewProblem } from "./problem.ts";
 import {
 	findPanelists,
@@ -83,8 +92,10 @@ import {
 	readPreferences,
 	savePreferences,
 } from "./store.ts";
-
 import { resolveSlot } from "./time.ts";
+import { readStaffWorkspace } from "./workspace.ts";
+
+import type { WorkspaceLive } from "./workspace-live.ts";
 
 const slotQuery = interviewSlotSchema.extend({
 	timeZone: z.string().max(100),
@@ -106,8 +117,11 @@ function pageNumber(value: string | undefined) {
 export function interviewStaffRoutes(
 	database: Database,
 	config: InterviewConfig,
+	transport?: { live: WorkspaceLive; trustedOrigins: readonly string[] },
 ) {
-	const app = new Hono<{ Variables: { staff: StaffIdentity } }>();
+	const app = new Hono<{
+		Variables: { staff: StaffIdentity; staffSession: StaffSessionIdentity };
+	}>();
 	app.use("/reports/*", async (c, next) => {
 		if (c.get("staff").role !== "director")
 			throw new InterviewProblem(403, "forbidden");
@@ -414,6 +428,7 @@ export function interviewStaffRoutes(
 					"hr",
 					uuidParam(c.req.param("id")),
 					input,
+					input.action === "end" ? c.get("staffSession") : undefined,
 				),
 			),
 		);
@@ -469,6 +484,74 @@ export function interviewStaffRoutes(
 			),
 		),
 	);
+	if (transport)
+		app.get("/my-interviews/:id/live", async (c, next) => {
+			const id = uuidParam(c.req.param("id"));
+			const identity = c.get("staffSession");
+			return transport.live.open(
+				c,
+				next,
+				transport.trustedOrigins,
+				id,
+				async (binding) =>
+					workspaceDescriptorSchema.parse(
+						await readStaffWorkspace(
+							database,
+							config,
+							id,
+							identity,
+							undefined,
+							binding,
+						),
+					),
+				identity.userId,
+			);
+		});
+	app.get("/my-interviews/:id/workspace", async (c) =>
+		c.json(
+			workspaceDescriptorSchema.parse(
+				await readStaffWorkspace(
+					database,
+					config,
+					uuidParam(c.req.param("id")),
+					c.get("staffSession"),
+					undefined,
+					c.req.header(workspaceBindingHeader),
+					{},
+				),
+			),
+		),
+	);
+	app.get("/my-interviews/:id/workspace/runs/:runId", async (c) =>
+		c.json(
+			codeRunOutputSchema.parse(
+				await readStaffWorkspace(
+					database,
+					config,
+					uuidParam(c.req.param("id")),
+					c.get("staffSession"),
+					undefined,
+					c.req.header(workspaceBindingHeader),
+					{ runId: uuidParam(c.req.param("runId")) },
+				),
+			),
+		),
+	);
+	app.get("/my-interviews/:id/workspace/:kind", async (c) => {
+		const kind = artifactKind(c.req.param("kind"));
+		return c.json(
+			artifactSnapshotSchema(kind).parse(
+				await readStaffWorkspace(
+					database,
+					config,
+					uuidParam(c.req.param("id")),
+					c.get("staffSession"),
+					kind,
+					c.req.header(workspaceBindingHeader),
+				),
+			),
+		);
+	});
 	app.post("/my-interviews/:id/commands", smallBody, async (c) => {
 		const input = await readBody(c, interviewCommandSchema);
 		if (input.action !== "start" && input.action !== "end")
@@ -480,6 +563,7 @@ export function interviewStaffRoutes(
 			"panelist",
 			uuidParam(c.req.param("id")),
 			input,
+			input.action === "end" ? c.get("staffSession") : undefined,
 		);
 		logger.info(
 			{
@@ -490,6 +574,34 @@ export function interviewStaffRoutes(
 		);
 		return c.json(interviewResultSchema.parse(result));
 	});
+	app.get("/my-interviews/:id/concerns", async (c) =>
+		c.json(
+			concernViewSchema.parse(
+				await readConcerns(
+					database,
+					config,
+					uuidParam(c.req.param("id")),
+					c.get("staffSession"),
+				),
+			),
+		),
+	);
+	app.post(
+		"/my-interviews/:id/concerns",
+		bodyLimit({ maxSize: 28_672 }),
+		async (c) =>
+			c.json(
+				concernEntrySchema.parse(
+					await saveConcern(
+						database,
+						config,
+						uuidParam(c.req.param("id")),
+						c.get("staffSession"),
+						await readBody(c, saveConcernSchema),
+					),
+				),
+			),
+	);
 	app.get("/my-interviews/:id/assessment", async (c) => {
 		const known = c.req.header("If-None-Match");
 		const view = await getAssignedAssessment(

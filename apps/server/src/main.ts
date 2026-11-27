@@ -4,7 +4,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
-import { db, pool } from "./database.ts";
+import { databaseUrl, db, pool } from "./database.ts";
 import { sweepOriginals } from "./drives/cleanup.ts";
 import { driveRoutes } from "./drives/routes.ts";
 import { sweepStaging } from "./drives/staging.ts";
@@ -12,6 +12,7 @@ import { sweepAdmission } from "./interviews/admission.ts";
 import { interviewCandidateRoutes } from "./interviews/candidate-routes.ts";
 import { interviewStaffRoutes } from "./interviews/staff-routes.ts";
 import { readInterviewConfig } from "./interviews/store.ts";
+import { WorkspaceLive } from "./interviews/workspace-live.ts";
 import { createQueueClient, intakeQueue, probeQueue } from "./jobs.ts";
 import { errorClass, logger } from "./logger.ts";
 import { workerHeartbeat } from "./schema.ts";
@@ -71,12 +72,16 @@ async function sweep() {
 	} while (!cleanup.signal.aborted);
 }
 const sweeping = sweep();
+const live = new WorkspaceLive(databaseUrl);
 const staff = staffRoutes(
 	db,
 	staffSettings,
 	auth,
 	driveRoutes(db, boss),
-	interviewStaffRoutes(db, interviewConfig),
+	interviewStaffRoutes(db, interviewConfig, {
+		live,
+		trustedOrigins: staffSettings.trustedOrigins,
+	}),
 );
 
 const app = createApp(
@@ -104,9 +109,21 @@ const app = createApp(
 	},
 	logger,
 	staff,
-	interviewCandidateRoutes(db, interviewConfig, staffSettings, mailer.deliver),
+	interviewCandidateRoutes(
+		db,
+		interviewConfig,
+		staffSettings,
+		mailer.deliver,
+		live,
+		boss,
+	),
 );
 
+app.use("*", async (c, next) => {
+	await next();
+	if (c.res.headers.get("Content-Type")?.startsWith("text/html"))
+		c.header("Content-Security-Policy", "font-src 'self' data:");
+});
 const serveWebApp = serveStatic({ path: "./apps/web/dist/index.html" });
 for (const path of [
 	"/sign-in",
@@ -148,14 +165,19 @@ app.get("/pdf-assets/*", async (c, next) => {
 	return servePdfAssets(c, next);
 });
 app.get("*", serveStatic({ root: "./apps/web/dist" }));
-const server = serve({ fetch: app.fetch, port: 3000 }, ({ port }) => {
-	logger.info({ port }, "Interview Studio listening");
-});
+const server = serve(
+	{ fetch: app.fetch, port: 3000, websocket: { server: live.server } },
+	({ port }) => {
+		logger.info({ port }, "Interview Studio listening");
+	},
+);
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
 	process.once(signal, () => {
 		cleanup.abort();
+		const stopLive = live.stop();
 		server.close(async () => {
+			await stopLive;
 			await sweeping;
 			await boss.stop();
 			s3.destroy();

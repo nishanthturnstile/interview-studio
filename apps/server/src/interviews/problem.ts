@@ -11,6 +11,6 @@ export class InterviewProblem extends Error {
 		this.body = { error, ...details };
 	}
 
-	readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 429 | 503;
+	readonly status: 400 | 401 | 403 | 404 | 408 | 409 | 413 | 422 | 429 | 503;
 	readonly body: InterviewError;
 }

@@ -1,7 +1,11 @@
 import {
+	type ArtifactPayload,
 	type AssessmentCriteria,
 	type AssessmentDraft,
 	type AssessmentScorecard,
+	artifactKindSchema,
+	codeLanguageSchema,
+	codeRunStateSchema,
 	type FeedbackResolutionOutcome,
 	feedbackResolutionActionSchema,
 	feedbackReviewKindSchema,
@@ -52,6 +56,14 @@ export const feedbackReviewKind = pgEnum(
 export const feedbackResolutionAction = pgEnum(
 	"interview_feedback_resolution_action",
 	feedbackResolutionActionSchema.enum,
+);
+export const interviewCodeLanguage = pgEnum(
+	"interview_code_language",
+	codeLanguageSchema.enum,
+);
+export const interviewCodeRunState = pgEnum(
+	"interview_code_run_state",
+	codeRunStateSchema.enum,
 );
 
 export const interviewPreference = pgTable(
@@ -105,6 +117,9 @@ export const interviewRound = pgTable(
 			"panelist_unavailable" | "l1_pass_reversed"
 		>(),
 		legacyAssessment: boolean("legacy_assessment").notNull().default(false),
+		codeExecutionEnabled: boolean("code_execution_enabled")
+			.notNull()
+			.default(false),
 		qualifyingL1RoundId: uuid("qualifying_l1_round_id"),
 		qualifyingL1VersionId: uuid("qualifying_l1_version_id"),
 		reason: text(),
@@ -154,6 +169,38 @@ export const interviewRound = pgTable(
 			sql`${t.duration} between 5 and 480 and ${t.end} = ${t.start} + ${t.duration} * interval '1 minute'`,
 		),
 		check("interview_round_attempt_positive", sql`${t.attempt} > 0`),
+	],
+);
+
+export const interviewCodeRun = pgTable(
+	"interview_code_run",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		roundId: uuid("round_id")
+			.notNull()
+			.references(() => interviewRound.id),
+		commandId: uuid("command_id").notNull(),
+		language: interviewCodeLanguage().notNull(),
+		source: text().notNull(),
+		input: text().notNull(),
+		digest: text().notNull(),
+		inputDigest: text("input_digest").notNull(),
+		state: interviewCodeRunState().notNull().default("queued"),
+		stdout: text().notNull().default(""),
+		stderr: text().notNull().default(""),
+		createdAt: when("created_at").notNull().default(sql`clock_timestamp()`),
+		startedAt: when("started_at"),
+	},
+	(t) => [
+		unique("interview_code_run_command").on(t.roundId, t.commandId),
+		uniqueIndex("interview_code_run_unfinished")
+			.on(t.roundId)
+			.where(sql`${t.state} in ('queued', 'running')`),
+		index("interview_code_run_latest").on(
+			t.roundId,
+			t.createdAt.desc(),
+			t.id.desc(),
+		),
 	],
 );
 
@@ -492,3 +539,85 @@ export const interviewRateLimit = pgTable("interview_rate_limit", {
 	windowStart: when("window_start").notNull(),
 	attempts: integer().notNull(),
 });
+
+export const interviewArtifactKind = pgEnum(
+	"interview_artifact_kind",
+	artifactKindSchema.enum,
+);
+
+export const interviewArtifactRevision = pgTable(
+	"interview_artifact_revision",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		roundId: uuid("round_id")
+			.notNull()
+			.references(() => interviewRound.id),
+		kind: interviewArtifactKind().notNull(),
+		sequence: integer().notNull(),
+		schemaVersion: integer("schema_version").notNull(),
+		payload: jsonb().$type<ArtifactPayload[keyof ArtifactPayload]>().notNull(),
+		authorSessionId: uuid("author_session_id")
+			.notNull()
+			.references(() => interviewSession.id),
+		savedAt: when("saved_at").notNull().defaultNow(),
+	},
+	(t) => [
+		unique("interview_artifact_sequence_unique").on(
+			t.roundId,
+			t.kind,
+			t.sequence,
+		),
+		unique("interview_artifact_revision_scope_unique").on(
+			t.roundId,
+			t.kind,
+			t.id,
+		),
+		check("interview_artifact_sequence_positive", sql`${t.sequence} > 0`),
+		check("interview_artifact_schema_positive", sql`${t.schemaVersion} > 0`),
+	],
+);
+
+export const interviewArtifactHead = pgTable(
+	"interview_artifact_head",
+	{
+		roundId: uuid("round_id").notNull(),
+		kind: interviewArtifactKind().notNull(),
+		revisionId: uuid("revision_id").notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.roundId, t.kind] }),
+		foreignKey({
+			name: "interview_artifact_head_revision_fk",
+			columns: [t.roundId, t.kind, t.revisionId],
+			foreignColumns: [
+				interviewArtifactRevision.roundId,
+				interviewArtifactRevision.kind,
+				interviewArtifactRevision.id,
+			],
+		}),
+	],
+);
+
+export const interviewConcern = pgTable(
+	"interview_concern",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		roundId: uuid("round_id")
+			.notNull()
+			.references(() => interviewRound.id),
+		authorId: text("author_id")
+			.notNull()
+			.references(() => user.id),
+		commandId: uuid("command_id").notNull(),
+		observation: text().notNull(),
+		context: text().notNull(),
+		createdAt: when("created_at").notNull().defaultNow(),
+	},
+	(t) => [
+		unique("interview_concern_command_unique").on(
+			t.roundId,
+			t.authorId,
+			t.commandId,
+		),
+	],
+);

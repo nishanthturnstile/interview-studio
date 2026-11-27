@@ -19,5 +19,8 @@ export * from "./assessments.ts";
 export * from "./director-reports.ts";
 export * from "./drives.ts";
 export * from "./feedback-reviews.ts";
+export * from "./interview-artifacts.ts";
+export * from "./interview-concerns.ts";
+export * from "./interview-execution.ts";
 export * from "./interviews.ts";
 export * from "./staff.ts";

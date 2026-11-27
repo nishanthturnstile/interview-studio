@@ -1,6 +1,11 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
-import type { CandidateInterview } from "@studio/contracts";
+import type { CandidateInterview, WorkspaceHeadIds } from "@studio/contracts";
 import { and, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import {
+	candidateToken,
+	lockCandidateRound,
+	requireCurrentCandidate,
+} from "./candidate-access.ts";
 import { InterviewProblem } from "./problem.ts";
 import { occupying, roundCore, years } from "./queries.ts";
 import { closeRound } from "./scheduling.ts";
@@ -24,7 +29,12 @@ import {
 	sign,
 	type Transaction,
 } from "./store.ts";
-import { entryOpensAt, requireEntryWindow } from "./time.ts";
+import { requireEntryWindow } from "./time.ts";
+import {
+	requireCandidateCloseBinding,
+	requireCandidateCloseHeads,
+} from "./workspace.ts";
+import { notifyWorkspace } from "./workspace-signals.ts";
 
 type InviteInput = { secret: string; email: string };
 type VerifyInput = InviteInput & { challengeId: string; code: string };
@@ -297,6 +307,7 @@ export async function verifyCode(
 			round.revision,
 			round.id,
 		);
+		await notifyWorkspace(tx, { roundId: round.id });
 		return { id: round.id, token };
 	});
 	if (!session) throw new InterviewProblem(409, "invalid_code");
@@ -306,7 +317,13 @@ export async function verifyCode(
 type CandidateAction =
 	| { action: "read" | "presence" }
 	| { action: "confirm"; name: string; years: number | null }
-	| { action: "end"; commandId: string; revision: number };
+	| {
+			action: "end";
+			commandId: string;
+			revision: number;
+			expectedHeads?: WorkspaceHeadIds;
+			binding?: string;
+	  };
 
 export function candidateRound(
 	database: Database,
@@ -329,34 +346,11 @@ export function candidateRound(
 	token: string | undefined,
 	action: CandidateAction,
 ) {
-	const unavailable = () => new InterviewProblem(404, "unavailable");
-	if (!token) throw new InterviewProblem(401, "unavailable");
-	if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw unavailable();
+	const tokenHash = candidateToken(token);
 	return database.transaction(async (tx) => {
-		// Candidate writes serialize on the round before touching admission rows.
-		const [round] = await tx
-			.select()
-			.from(interviewRound)
-			.where(eq(interviewRound.id, id))
-			.for("update");
-		const [session] = await tx
-			.select({
-				session: interviewSession,
-				revoked: interviewInvitation.revokedAt,
-			})
-			.from(interviewSession)
-			.innerJoin(
-				interviewInvitation,
-				eq(interviewSession.invitationId, interviewInvitation.id),
-			)
-			.where(
-				and(
-					eq(interviewSession.roundId, id),
-					eq(interviewSession.tokenHash, hash(token)),
-				),
-			);
-		if (!round || !session) throw unavailable();
-		const actor = { actor: "candidate", actorId: session.session.id } as const;
+		const access = await lockCandidateRound(tx, id, tokenHash);
+		const { round, session } = access;
+		const actor = { actor: "candidate", actorId: session.id } as const;
 		const receipt =
 			action.action === "end"
 				? await commandReceipt(tx, config, actor, action, `round:${id}`)
@@ -364,26 +358,16 @@ export function candidateRound(
 		if (receipt?.previous) {
 			if (receipt.matches && receipt.previous.resourceId === id)
 				return { completed: true } as const;
-			if (!session.session.revokedAt)
+			if (!session.revokedAt)
 				throw new InterviewProblem(409, "idempotency_conflict");
 		}
-		const now = currentTime(config);
-		if (
-			session.revoked ||
-			session.session.revokedAt ||
-			(round.state !== "active" &&
-				(round.state !== "scheduled" ||
-					now < entryOpensAt(round.start) ||
-					now >= round.end))
-		) {
-			throw unavailable();
-		}
+		const now = requireCurrentCandidate(config, access);
 
 		let [attendance] = await tx
 			.select()
 			.from(interviewAttendance)
 			.where(eq(interviewAttendance.roundId, id));
-		let confirmed = Boolean(session.session.confirmedAt);
+		let confirmed = Boolean(session.confirmedAt);
 		const profile = (): CandidateInterview => {
 			const core = roundCore(round);
 			return {
@@ -407,10 +391,17 @@ export function candidateRound(
 		if (action.action === "end") {
 			if (!confirmed || round.state !== "active")
 				throw new InterviewProblem(409, "invalid_transition");
+			const expectedHeads = requireCandidateCloseBinding(
+				config,
+				id,
+				session.id,
+				action,
+			);
 			if (action.revision !== round.revision)
 				throw new InterviewProblem(409, "revision_conflict", {
 					round: profile(),
 				});
+			await requireCandidateCloseHeads(tx, id, expectedHeads);
 			await closeRound(tx, actor, round, now);
 			await receipt?.record(id);
 			return { completed: true } as const;

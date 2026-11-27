@@ -1,12 +1,15 @@
 import {
+	type ArtifactKind,
 	type CandidateInterview,
 	candidateInterviewSchema,
 	confirmInterviewProfileSchema,
 	interviewChallengeSchema,
 	interviewCompleteSchema,
 	interviewResultSchema,
+	type WorkspaceHeadIds,
 } from "@studio/contracts";
 import { getRouteApi, Link } from "@tanstack/react-router";
+import { cn } from "cn";
 import {
 	ArrowLeft,
 	CircleCheck,
@@ -43,17 +46,26 @@ import { Input } from "@/components/ui/input";
 import {
 	InterviewRequestError,
 	interviewRequest,
-	useCommandKey,
 	useInterviewPoll,
 } from "./api";
+import { isTransientWorkspaceError } from "./artifact-queue";
 import { InterviewAlert, InterviewLoading, ScheduleCard } from "./display";
 import { EndInterviewDialog } from "./end-dialog";
 import {
 	forgetInvitationFragment,
 	invitationFragment,
 } from "./invitation-fragment";
+import { useWorkspace } from "./use-workspace";
+import { artifactLabel, WorkspaceFlushError } from "./workspace-client";
+import { WorkspaceTools } from "./workspace-tools";
 
-function CandidateShell({ children }: { children: ReactNode }) {
+function CandidateShell({
+	children,
+	wide = false,
+}: {
+	children: ReactNode;
+	wide?: boolean;
+}) {
 	return (
 		<>
 			<header className="border-b bg-card">
@@ -67,7 +79,12 @@ function CandidateShell({ children }: { children: ReactNode }) {
 					<ThemeButton />
 				</div>
 			</header>
-			<main className="mx-auto flex w-full max-w-xl flex-col gap-4 px-4 py-10 sm:px-8 sm:py-16">
+			<main
+				className={cn(
+					"mx-auto flex w-full flex-col gap-4 px-4 sm:px-8",
+					wide ? "max-w-5xl py-5 sm:py-8" : "max-w-xl py-10 sm:py-16",
+				)}
+			>
 				{children}
 			</main>
 		</>
@@ -79,19 +96,29 @@ function CandidateCard({
 	description,
 	children,
 	icon: Icon = Video,
+	focusTitle = false,
 }: {
 	title: string;
 	description: string;
 	children?: ReactNode;
 	icon?: typeof Video;
+	focusTitle?: boolean;
 }) {
+	const heading = useRef<HTMLHeadingElement>(null);
+	useEffect(() => {
+		if (focusTitle) heading.current?.focus();
+	}, [focusTitle]);
 	return (
 		<Card>
 			<CardHeader className="gap-3">
 				<div className="grid size-10 place-items-center rounded-md bg-accent text-accent-foreground">
 					<Icon className="size-5" aria-hidden="true" />
 				</div>
-				<h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+				<h1
+					ref={heading}
+					tabIndex={focusTitle ? -1 : undefined}
+					className="text-2xl font-bold tracking-tight sm:text-3xl"
+				>
 					{title}
 				</h1>
 				<CardDescription className="max-w-[45ch] text-sm leading-relaxed sm:text-base">
@@ -413,12 +440,28 @@ const candidateRoute = getRouteApi("/interview/$roundId");
 
 export function CandidateRound() {
 	const { roundId } = candidateRoute.useParams();
+	return <CandidateAttempt key={roundId} roundId={roundId} />;
+}
+
+function CandidateAttempt({ roundId }: { roundId: string }) {
+	const [kind, setKind] = useState<ArtifactKind>("code");
+	const [reviewUnfinished, setReviewUnfinished] = useState(false);
 	const [finished, setFinished] = useState(false);
 	const [confirming, setConfirming] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const [preparing, setPreparing] = useState(false);
 	const [commandError, setCommandError] = useState<unknown>();
+	const [endCommand, setEndCommand] = useState<{
+		binding: string;
+		data: {
+			revision: number;
+			commandId: string;
+			expectedHeads: WorkspaceHeadIds;
+		};
+	}>();
 	const [refresh, setRefresh] = useState(0);
-	const withKey = useCommandKey();
+	const prepareGeneration = useRef(0);
+	const workspaceStarted = useRef(false);
 	const path = `/interviews/rounds/${roundId}`;
 	const resource = useInterviewPoll(
 		finished ? null : path,
@@ -426,32 +469,104 @@ export function CandidateRound() {
 		{ candidate: true, refresh },
 	);
 	const round = resource?.data;
+	const active =
+		round?.state === "active" &&
+		round.confirmed &&
+		!finished &&
+		!resource?.terminal;
+	if (active) workspaceStarted.current = true;
+	const workspace = useWorkspace(
+		workspaceStarted.current && !finished ? path : null,
+	);
+
+	function openEnd(open: boolean) {
+		setConfirming(open);
+		workspace.client?.freeze(open);
+		setCommandError(undefined);
+		setEndCommand(undefined);
+		if (open) void prepareEnd();
+		else {
+			prepareGeneration.current++;
+			setPreparing(false);
+		}
+	}
+	async function prepareEnd() {
+		if (!round || !workspace.client) return;
+		const generation = ++prepareGeneration.current;
+		setEndCommand(undefined);
+		setCommandError(undefined);
+		setPreparing(true);
+		try {
+			const { binding, expectedHeads } = await workspace.client.prepareClose();
+			if (generation === prepareGeneration.current) {
+				setEndCommand({
+					binding,
+					data: {
+						commandId: crypto.randomUUID(),
+						revision: round.revision,
+						expectedHeads,
+					},
+				});
+			}
+		} catch (error) {
+			if (generation === prepareGeneration.current) setCommandError(error);
+		} finally {
+			if (generation === prepareGeneration.current) setPreparing(false);
+		}
+	}
 	async function end() {
-		if (!round || busy) return;
+		if (!endCommand || busy) return;
 		setBusy(true);
 		setCommandError(undefined);
 		try {
-			await interviewRequest(`${path}/end`, interviewCompleteSchema, {
-				data: withKey({ revision: round.revision }),
-			});
+			const send = () =>
+				interviewRequest(`${path}/end`, interviewCompleteSchema, endCommand);
+			try {
+				await send();
+			} catch (error) {
+				if (!isTransientWorkspaceError(error)) throw error;
+				await send();
+			}
 			setFinished(true);
 		} catch (error) {
-			setCommandError(error);
+			const kind =
+				error instanceof InterviewRequestError &&
+				error.problem?.error === "workspace_conflict"
+					? error.problem.kind
+					: undefined;
+			setCommandError(kind ? new WorkspaceFlushError(kind, error) : error);
+			workspace.client?.terminateIfDenied(error);
 			if (
 				error instanceof InterviewRequestError &&
 				[404, 409].includes(error.status)
-			)
+			) {
+				setEndCommand(undefined);
 				setRefresh((value) => value + 1);
+			}
 		} finally {
 			setBusy(false);
 		}
 	}
-	const unavailable = finished || resource?.terminal;
+	const terminal = workspace.view.terminal;
+	const replaced =
+		(terminal instanceof InterviewRequestError &&
+			terminal.problem?.error === "workspace_binding_changed") ||
+		(workspaceStarted.current && round?.state === "active" && !round.confirmed);
+	const unavailable = finished || resource?.terminal || terminal;
 	return (
-		<CandidateShell>
-			{unavailable ? (
+		<CandidateShell wide={active && !unavailable}>
+			{replaced ? (
+				<CandidateCard
+					title="Your interview session changed"
+					focusTitle
+					description="Reload this page to continue with the current session."
+				>
+					<Button onClick={() => window.location.reload()}>Reload page</Button>
+				</CandidateCard>
+			) : unavailable ? (
 				<CandidateCard
 					title="Interview ended or unavailable"
+					focusTitle
 					description="You can close this tab. Contact your interview coordinator if you need help."
 					icon={CircleCheck}
 				/>
@@ -490,22 +605,62 @@ export function CandidateRound() {
 						{resource?.error !== undefined && (
 							<InterviewAlert error={resource.error} />
 						)}
-						{round.state === "active" && (
+						{active && (
 							<div>
 								<EndInterviewDialog
 									open={confirming}
-									setOpen={(value) => {
-										setConfirming(value);
-										setCommandError(undefined);
-									}}
+									setOpen={openEnd}
 									pending={busy}
-									error={commandError}
+									preparing={preparing}
+									ready={Boolean(endCommand)}
+									triggerDisabled={!workspace.client}
+									error={
+										commandError instanceof WorkspaceFlushError
+											? commandError.problem
+											: commandError
+									}
+									onRetryPrepare={() => void prepareEnd()}
+									actions={
+										commandError instanceof WorkspaceFlushError && (
+											<Button
+												variant="outline"
+												onClick={() => {
+													setKind(commandError.kind);
+													setReviewUnfinished(commandError.kind === "board");
+													openEnd(false);
+													requestAnimationFrame(() => {
+														document
+															.querySelector<HTMLElement>(
+																'[data-interview-workspace] [role="tab"][aria-selected="true"]',
+															)
+															?.focus();
+													});
+												}}
+											>
+												Review {artifactLabel[commandError.kind]}
+											</Button>
+										)
+									}
 									onEnd={() => void end()}
 									candidate
 								/>
 							</div>
 						)}
 					</CandidateCard>
+					{active && workspace.client && (
+						<WorkspaceTools
+							client={workspace.client}
+							view={workspace.view}
+							candidate
+							frozen={confirming}
+							kind={kind}
+							onKindChange={(kind) => {
+								setKind(kind);
+								setReviewUnfinished(false);
+							}}
+							reviewUnfinished={reviewUnfinished}
+						/>
+					)}
 					<ScheduleCard
 						round={round}
 						title={`${round.level.toUpperCase()} interview`}

@@ -1,4 +1,5 @@
 import { Square } from "lucide-react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -19,6 +20,11 @@ export function EndInterviewDialog({
 	error,
 	onEnd,
 	candidate = false,
+	preparing = false,
+	ready = true,
+	triggerDisabled = false,
+	onRetryPrepare,
+	actions,
 }: {
 	open: boolean;
 	setOpen: (open: boolean) => void;
@@ -26,6 +32,11 @@ export function EndInterviewDialog({
 	error: unknown;
 	onEnd: () => void;
 	candidate?: boolean;
+	preparing?: boolean;
+	ready?: boolean;
+	triggerDisabled?: boolean;
+	onRetryPrepare?: () => void;
+	actions?: ReactNode;
 }) {
 	return (
 		<Dialog
@@ -35,7 +46,12 @@ export function EndInterviewDialog({
 			}}
 		>
 			<DialogTrigger
-				render={<Button variant={candidate ? "outline" : "destructive"} />}
+				render={
+					<Button
+						variant={candidate ? "outline" : "destructive"}
+						disabled={triggerDisabled}
+					/>
+				}
 			>
 				{!candidate && <Square aria-hidden="true" />}
 				End interview
@@ -49,12 +65,27 @@ export function EndInterviewDialog({
 							: "This closes access for the candidate and moves the round to Awaiting feedback."}
 					</DialogDescription>
 				</DialogHeader>
+				{preparing && (
+					<p role="status" className="text-sm text-muted-foreground">
+						Saving and checking workspace…
+					</p>
+				)}
 				{error !== undefined && <InterviewAlert error={error} />}
+				{error !== undefined && !ready && !preparing && onRetryPrepare && (
+					<Button variant="outline" onClick={onRetryPrepare}>
+						Retry check
+					</Button>
+				)}
+				{actions}
 				<DialogFooter>
 					<DialogClose render={<Button variant="outline" disabled={pending} />}>
 						Keep interview open
 					</DialogClose>
-					<Button variant="destructive" disabled={pending} onClick={onEnd}>
+					<Button
+						variant="destructive"
+						disabled={pending || !ready}
+						onClick={onEnd}
+					>
 						{pending ? "Ending…" : "End interview"}
 					</Button>
 				</DialogFooter>

@@ -27,6 +27,7 @@ import {
 	interviewSession,
 } from "./schema.ts";
 import { validateTimeZone } from "./time.ts";
+import { notifyWorkspace } from "./workspace-signals.ts";
 
 export type Database = typeof db;
 export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -37,6 +38,7 @@ export type InterviewConfig = {
 	origin: string;
 	domains: ReadonlySet<string>;
 	trustedProxies?: ReadonlySet<string>;
+	codeExecutionEnabled?: boolean;
 	clock?: () => Date;
 };
 export function readInterviewConfig(
@@ -50,6 +52,7 @@ export function readInterviewConfig(
 		key,
 		origin: staff.origin,
 		domains: staff.domains,
+		codeExecutionEnabled: env.STUDIO_CODE_EXECUTION_ENABLED === "true",
 		trustedProxies: readInterviewProxyAddresses(
 			env.STUDIO_INTERVIEW_TRUSTED_PROXIES,
 		),
@@ -229,6 +232,7 @@ export async function revokeAdmission(
 				isNull(interviewSession.revokedAt),
 			),
 		);
+	await notifyWorkspace(tx, { roundId });
 }
 
 export async function commandReceipt(

@@ -5,6 +5,7 @@ import {
 } from "@studio/contracts";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { db } from "../database.ts";
+import { notifyWorkspace } from "../interviews/workspace-signals.ts";
 import { user } from "./auth-schema.ts";
 import { staffDirectorBootstrap, staffGrant } from "./role-schema.ts";
 import { isApprovedEmail } from "./settings.ts";
@@ -104,6 +105,7 @@ export async function grantStaffRole(
 				target: staffGrant.userId,
 				set: { role, grantedBy: actorId, grantedAt: sql`now()` },
 			});
+		await notifyWorkspace(tx, { staffId: targetId });
 		return "granted";
 	});
 }

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db, pool } from "./database.ts";
+import { codeRunQueue } from "./interviews/code-runs.ts";
 import { createQueueClient, intakeQueue, probeQueue } from "./jobs.ts";
 import { errorClass, logger } from "./logger.ts";
 
@@ -11,6 +12,12 @@ try {
 	});
 	await boss.start();
 	await boss.createQueue(probeQueue);
+	await boss.createQueue(codeRunQueue, {
+		policy: "singleton",
+		expireInSeconds: 30,
+		retryLimit: 2,
+		retryDelay: 1,
+	});
 	await boss.createQueue(intakeQueue, {
 		expireInSeconds: 40,
 		retryLimit: 2,

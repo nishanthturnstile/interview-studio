@@ -7,6 +7,11 @@ import {
 } from "@studio/contracts";
 import { and, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { drive } from "../drives/schema.ts";
+import {
+	lockStaffSession,
+	requireStaffSession,
+	type StaffSessionIdentity,
+} from "../staff/session-access.ts";
 import { InterviewProblem } from "./problem.ts";
 import { getAssignedRound, getHrRound, occupying, years } from "./queries.ts";
 import {
@@ -46,6 +51,7 @@ import {
 	requireNoPendingReview,
 	requireWorkflowRevision,
 } from "./workflow.ts";
+import { notifyWorkspace } from "./workspace-signals.ts";
 
 type StaffRole = "hr" | "panelist";
 
@@ -319,6 +325,7 @@ export function changeRound(
 	role: StaffRole,
 	id: string,
 	input: InterviewCommand,
+	session?: StaffSessionIdentity,
 ) {
 	return database.transaction(async (tx) => {
 		const actor = { actor: "staff", actorId: staffId } as const;
@@ -364,7 +371,9 @@ export function changeRound(
 			if (recover && panelist?.role === "panelist")
 				throw new InterviewProblem(409, "invalid_transition");
 		}
+		if (session) await lockStaffSession(tx, session);
 		if (receipt.previous) {
+			if (session) await requireStaffSession(tx, session);
 			if (!receipt.matches)
 				throw new InterviewProblem(409, "idempotency_conflict");
 			return { id };
@@ -381,6 +390,7 @@ export function changeRound(
 			.from(interviewRound)
 			.where(eq(interviewRound.id, id))
 			.for("update");
+		if (session) await requireStaffSession(tx, session);
 		const now = currentTime(config);
 		if (round.revision !== input.revision) {
 			const current =
@@ -480,6 +490,7 @@ async function applyHrChange(
 				id,
 			);
 			next.panelistId = input.panelistId;
+			await notifyWorkspace(tx, { roundId: id });
 			break;
 		case "reschedule": {
 			const { start, end, duration } = resolveSlot(input.slot, round.timeZone);

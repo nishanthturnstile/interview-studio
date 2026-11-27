@@ -200,3 +200,48 @@
 		scroll-behavior: auto;
 	}
 }
+
+[data-interview-workspace-hidden] [data-workspace-content] {
+	visibility: hidden;
+}
+
+[data-interview-workspace]:modal {
+	position: fixed;
+	inset: 0;
+	width: 100%;
+	height: 100dvh;
+	max-height: none;
+	overflow: auto;
+	overscroll-behavior: contain;
+	border: 0;
+	border-radius: 0;
+	--workspace-editor-height: 100%;
+	--workspace-board-height: auto;
+}
+
+[data-interview-workspace]:modal > section {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+[data-interview-workspace]:modal
+	:is(
+		[data-slot="tabs"],
+		[data-workspace-content]:not([hidden]),
+		[data-workspace-tool]
+	) {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+[data-interview-workspace]:modal [data-workspace-surface] {
+	flex: 1;
+	min-height: 16rem;
+}
+
+html:has([data-interview-workspace]:modal) {
+	overflow: hidden;
+}

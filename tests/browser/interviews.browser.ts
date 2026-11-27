@@ -52,7 +52,7 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 }, info) => {
 	if (!baseURL || !password)
 		throw new Error("Missing local fixture configuration");
-	test.setTimeout(180_000);
+	test.setTimeout(240_000);
 	const hrContext = await browser.newContext({
 		baseURL,
 		permissions: ["clipboard-read", "clipboard-write"],
@@ -473,6 +473,127 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 				name: `Continue interview for ${applicant}`,
 			}),
 		).toBeVisible({ timeout: 12_000 });
+		const candidateWorkspace = candidate.getByRole("region", {
+			name: "Interview workspace",
+		});
+		const panelistWorkspace = panelist.getByRole("region", {
+			name: "Interview workspace",
+		});
+		const candidateSource = candidateWorkspace.getByLabel("Source code");
+		const panelistSource = panelistWorkspace.getByLabel("Source code");
+		await expect(panelistWorkspace.getByText("Live · Read only")).toBeVisible({
+			timeout: 12_000,
+		});
+		await candidateWorkspace.getByLabel("Language").selectOption("python");
+		await expect(candidateSource).toContainText('print("Hello, world!")');
+		await candidateSource.fill('print("Studio workspace 😀")');
+		await expect(
+			candidateWorkspace.getByText("Saved", { exact: true }),
+		).toBeVisible();
+		await expect(panelistSource).toHaveAttribute("contenteditable", "false");
+		await expect(panelistSource).toContainText('print("Studio workspace 😀")', {
+			timeout: 12_000,
+		});
+		await candidate.reload();
+		await expect(candidateSource).toContainText('print("Studio workspace 😀")');
+		await expect(candidateWorkspace.getByLabel("Language")).toHaveValue(
+			"python",
+		);
+		await candidateWorkspace.getByLabel("Language").selectOption("java");
+		await expect(candidateSource).toContainText("public class Main");
+		await candidateWorkspace.getByLabel("Language").selectOption("python");
+		await expect(candidateSource).toContainText('print("Studio workspace 😀")');
+
+		// Open the heavier canvas only when the user selects Whiteboard.
+		await candidate.setViewportSize({ width: 1040, height: 900 });
+		const boardTab = candidateWorkspace.getByRole("tab", {
+			name: "Whiteboard",
+		});
+		await boardTab.focus();
+		await boardTab.press("Enter");
+		const boardPanel = candidateWorkspace.getByRole("tabpanel", {
+			name: "Whiteboard",
+		});
+		const candidateCanvas = boardPanel.locator("canvas.interactive");
+		await expect(candidateCanvas).toBeVisible({ timeout: 15_000 });
+		await boardPanel.getByTitle(/^Rectangle/).click({ timeout: 8_000 });
+		await candidateCanvas.scrollIntoViewIfNeeded();
+		const board = await candidateCanvas.boundingBox();
+		if (!board) throw new Error("Canvas is missing its drawing area");
+		const drawStart = {
+			x: board.x + board.width * 0.44,
+			y: board.y + board.height * 0.41,
+		};
+		await candidate.mouse.move(drawStart.x, drawStart.y);
+		await candidate.mouse.down();
+		await candidate.mouse.move(drawStart.x + 135, drawStart.y + 65, {
+			steps: 8,
+		});
+		await candidate.mouse.up();
+		await boardPanel.getByTitle(/^Draw/).click({ timeout: 8_000 });
+		await candidateCanvas.scrollIntoViewIfNeeded();
+		const penStart = {
+			x: board.x + board.width * 0.23,
+			y: board.y + board.height * 0.6,
+		};
+		await candidate.mouse.move(penStart.x, penStart.y);
+		await candidate.mouse.down();
+		await candidate.mouse.move(penStart.x + 62, penStart.y + 35, { steps: 7 });
+		await candidate.mouse.move(penStart.x + 100, penStart.y + 5, { steps: 4 });
+		await candidate.mouse.up();
+		await boardPanel.getByTitle(/^Text/).click({ timeout: 8_000 });
+		await candidateCanvas.click({
+			position: { x: board.width * 0.49, y: board.height * 0.72 },
+		});
+		const boardText = boardPanel.locator("textarea");
+		await boardText.fill("Synthetic canvas note", { timeout: 8_000 });
+		await boardText.press("Escape");
+		await expect(
+			candidateWorkspace.getByText("Saved", { exact: true }),
+		).toBeVisible();
+		await panelistWorkspace.getByRole("tab", { name: "Whiteboard" }).click();
+		await panelistWorkspace
+			.getByText("Scene summary · 3 elements")
+			.click({ timeout: 12_000 });
+		await expect(
+			panelistWorkspace.getByText("Synthetic canvas note", { exact: true }),
+		).toBeVisible();
+		const expand = panelistWorkspace.getByRole("button", {
+			name: "Full screen",
+			exact: true,
+		});
+		await expand.click();
+		const fullscreen = panelist.getByRole("dialog", {
+			name: "Interview workspace",
+		});
+		await fullscreen.getByRole("region", { name: "Drawing canvas" }).click();
+		await panelist.keyboard.press("Escape");
+		await expect(
+			fullscreen.getByRole("button", { name: "Center drawing" }),
+		).toBeFocused();
+		await panelist.keyboard.press("Escape");
+		await expect(expand).toBeFocused();
+		await candidate.reload();
+		await candidateWorkspace.getByRole("tab", { name: "Whiteboard" }).click();
+		await expect(candidateCanvas).toBeVisible();
+		const candidateDescriptor = await candidate.request.get(
+			`/api/interviews/rounds/${id}/workspace`,
+		);
+		const { binding } = await candidateDescriptor.json();
+		const boardHead = await candidate.request.get(
+			`/api/interviews/rounds/${id}/workspace/board`,
+			{
+				headers: { "X-Studio-Workspace": binding },
+			},
+		);
+		expect(
+			(await boardHead.json()).payload.elements.map(
+				(element: { type: string }) => element.type,
+			),
+		).toEqual(["rectangle", "freedraw", "text"]);
+		await panelistWorkspace.getByRole("tab", { name: "Code" }).click();
+		await candidate.setViewportSize({ width: 390, height: 844 });
+
 		const assessmentPath = `/api/staff/my-interviews/${id}/assessment`;
 		await panelist.setViewportSize({ width: 390, height: 844 });
 		await expect(
@@ -481,6 +602,26 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 		const notes = panelist.getByLabel("Private notes", { exact: true });
 		const privateNotes = "🧭".repeat(16_000);
 		await notes.fill(privateNotes);
+		await panelist.getByText("Private observations", { exact: true }).click();
+		await panelist
+			.getByLabel("Context", { exact: true })
+			.fill("During the canvas exercise");
+		await panelist
+			.getByLabel("Observation", { exact: true })
+			.fill("Synthetic observation for the assigned panelist");
+		await panelist.getByRole("button", { name: "Save observation" }).click();
+		await expect(
+			panelist.getByText("Observation saved.", { exact: true }),
+		).toBeVisible();
+		await expect(notes).toHaveValue(privateNotes);
+		const concernPath = `/api/staff/my-interviews/${id}/concerns`;
+		expect((await otherContext.request.get(concernPath)).status()).toBe(404);
+		expect((await hr.request.get(concernPath)).status()).toBe(403);
+		expect((await candidate.request.get(concernPath)).status()).toBe(401);
+		await panelist
+			.getByText("Private observations (1)", { exact: true })
+			.click();
+
 		const addQuestion = panelist.getByRole("button", { name: "Add question" });
 		await addQuestion.press("Enter");
 		const question = panelist.getByLabel("Question 1", { exact: true });
@@ -629,6 +770,17 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 			.getByRole("dialog")
 			.getByRole("button", { name: "End interview", exact: true })
 			.click();
+		await expect(
+			panelistWorkspace.getByText("Final saved work · Read only"),
+		).toBeVisible({ timeout: 12_000 });
+		await expect(panelistSource).toContainText('print("Studio workspace 😀")');
+		expect(
+			(
+				await candidate.request.get(
+					`/api/interviews/rounds/${id}/workspace/code`,
+				)
+			).status(),
+		).toBe(404);
 		await expect(
 			candidate.getByRole("heading", {
 				name: "Interview ended or unavailable",
@@ -914,6 +1066,9 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 			const slot = new Date(Date.now() + (330 + 2) * 60_000).toISOString();
 			await sheet.getByLabel("Date", { exact: true }).fill(slot.slice(0, 10));
 			await sheet.getByLabel("Start time").fill(slot.slice(11, 16));
+			await sheet.getByRole("combobox", { name: "Interview mode" }).click();
+			await hr.getByRole("option", { name: "In person", exact: true }).click();
+			await sheet.getByLabel("Room", { exact: true }).fill("Studio test room");
 		}
 		async function bookL2() {
 			await prepareL2();
@@ -1060,17 +1215,108 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 			.getByRole("button", { name: "Keep interview open" })
 			.click();
 		await expect(headerEnd).toBeFocused();
-		await headerEnd.click();
-		await l2Panelist
+		expect(
+			(
+				await l2Panelist.request.get(
+					`/api/staff/my-interviews/${l2Id}/concerns`,
+				)
+			).status(),
+		).toBe(404);
+		await expect(
+			l2Panelist.getByText("Private observations", { exact: true }),
+		).toHaveCount(0);
+		await expect(
+			candidate.getByText("Studio test room", { exact: true }),
+		).toBeVisible();
+		const pendingTools: string[] = [];
+		const releaseSaves = Promise.withResolvers<void>();
+		await candidate.route(
+			`**/api/interviews/rounds/${l2Id}/workspace/*`,
+			async (route) => {
+				if (route.request().method() === "POST") {
+					pendingTools.push(
+						new URL(route.request().url()).pathname.split("/").at(-1) ?? "",
+					);
+					await releaseSaves.promise;
+				}
+				await route.continue();
+			},
+		);
+		const closeCommands: unknown[] = [];
+		await candidate.route(
+			`**/api/interviews/rounds/${l2Id}/end`,
+			async (route) => {
+				closeCommands.push(route.request().postDataJSON());
+				const response = await route.fetch();
+				if (closeCommands.length === 1) await route.abort("failed");
+				else await route.fulfill({ response });
+			},
+		);
+		const l2Code = candidate.getByRole("region", {
+			name: "Interview workspace",
+		});
+		await l2Code
+			.getByLabel("Source code")
+			.fill("const retainedAfterEnd = true;");
+		try {
+			await candidate.setViewportSize({ width: 1040, height: 900 });
+			await l2Code.getByRole("tab", { name: "Whiteboard" }).click();
+			const hiddenWorkBoard = l2Code.getByRole("tabpanel", {
+				name: "Whiteboard",
+			});
+			await hiddenWorkBoard.getByTitle(/^Rectangle/).click({ timeout: 12_000 });
+			const canvas = hiddenWorkBoard.locator("canvas.interactive");
+			await canvas.scrollIntoViewIfNeeded();
+			const bounds = await canvas.boundingBox();
+			if (!bounds) throw new Error("Missing L2 whiteboard canvas");
+			const x = bounds.x + bounds.width * 0.31;
+			const y = bounds.y + bounds.height * 0.45;
+			await candidate.mouse.move(x, y);
+			await candidate.mouse.down();
+			await candidate.mouse.move(x + 140, y + 80, { steps: 6 });
+			await candidate.mouse.up();
+			await candidate
+				.getByRole("button", { name: "End interview", exact: true })
+				.click();
+			const confirmEnd = candidate
+				.getByRole("dialog")
+				.getByRole("button", { name: "End interview", exact: true });
+			await expect(confirmEnd).toBeDisabled();
+			await expect
+				.poll(() => [...pendingTools].sort())
+				.toEqual(["board", "code"]);
+		} finally {
+			releaseSaves.resolve();
+		}
+		const confirmEnd = candidate
 			.getByRole("dialog")
-			.getByRole("button", { name: "End interview", exact: true })
-			.click();
+			.getByRole("button", { name: "End interview", exact: true });
+		await confirmEnd.click();
+		await expect.poll(() => closeCommands.length).toBe(2);
+		expect(closeCommands[1]).toEqual(closeCommands[0]);
+		await expect(
+			candidate.getByRole("heading", {
+				name: "Interview ended or unavailable",
+			}),
+		).toBeFocused();
+		await expect(l2Panelist.getByLabel("Source code")).toContainText(
+			"const retainedAfterEnd = true;",
+		);
 		await expect(
 			l2Panelist.getByText("Awaiting feedback", { exact: true }),
-		).toBeVisible();
+		).toBeVisible({ timeout: 12_000 });
 		expect(
 			(await candidate.request.get(`/api/interviews/rounds/${l2Id}`)).status(),
 		).toBe(404);
+		const l2PanelistWorkspace = l2Panelist.getByRole("region", {
+			name: "Interview workspace",
+		});
+		await l2PanelistWorkspace.getByRole("tab", { name: "Whiteboard" }).click();
+		await expect(
+			l2PanelistWorkspace.getByText("Scene summary · 1 element", {
+				exact: true,
+			}),
+		).toBeVisible();
 		const finishL2 = l2Panelist.getByRole("button", {
 			name: "Submit feedback",
 		});
@@ -1532,20 +1778,24 @@ test("takes a candidate through both rounds and resolves a corrected hiring deci
 			],
 		] as const) {
 			await page.bringToFront();
-			const denied = page.waitForResponse(
-				(response) =>
-					new URL(response.url()).pathname === protectedPath &&
-					response.status() === 401,
-				{ timeout: 12_000 },
-			);
 			const signedOut = await page.request.post("/api/auth/sign-out", {
 				headers: write,
 			});
 			expect(signedOut.ok()).toBe(true);
 			expect((await page.request.get("/api/staff/me")).status()).toBe(401);
-			await denied;
-			await expect(privateContent).toHaveCount(0);
+			expect((await page.request.get(protectedPath)).status()).toBe(401);
+			await expect(privateContent).toHaveCount(0, { timeout: 12_000 });
 		}
+		expect(
+			(
+				await l2Panelist.request.get(
+					`/api/staff/my-interviews/${freshL2Id}/workspace`,
+				)
+			).status(),
+		).toBe(401);
+		await expect(
+			l2Panelist.getByRole("region", { name: "Interview workspace" }),
+		).toHaveCount(0);
 	} finally {
 		await Promise.allSettled([
 			hrContext.close(),

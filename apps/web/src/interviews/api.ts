@@ -1,4 +1,8 @@
-import { type InterviewError, interviewErrorSchema } from "@studio/contracts";
+import {
+	type InterviewError,
+	interviewErrorSchema,
+	workspaceBindingHeader,
+} from "@studio/contracts";
 import { useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 
@@ -26,30 +30,31 @@ export function retryInterviewRead(failures: number, error: Error) {
 	);
 }
 
-export async function interviewRequest<T extends z.ZodType>(
+export async function interviewRequest<T>(
 	path: string,
-	schema: T,
+	schema: { parse: (value: unknown) => T },
 	options: {
 		signal?: AbortSignal;
+		binding?: string;
 		data?: unknown;
 		method?: "POST" | "PATCH";
-		cached?: z.output<T> & { revisionTag?: string };
+		cached?: T & { revisionTag?: string };
 	} = {},
-): Promise<z.output<T>> {
+): Promise<T> {
+	const headers = new Headers();
+	if (options.binding) headers.set(workspaceBindingHeader, options.binding);
+	if (options.data !== undefined)
+		headers.set("Content-Type", "application/json");
+	if (options.cached?.revisionTag)
+		headers.set("If-None-Match", options.cached.revisionTag);
 	const response = await fetch(`/api${path}`, {
 		method: options.method ?? (options.data !== undefined ? "POST" : "GET"),
 		cache: "no-store",
 		signal: options.signal
 			? AbortSignal.any([options.signal, AbortSignal.timeout(20_000)])
 			: AbortSignal.timeout(20_000),
-		...(options.data !== undefined
-			? {
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(options.data),
-				}
-			: options.cached?.revisionTag
-				? { headers: { "If-None-Match": options.cached.revisionTag } }
-				: {}),
+		headers,
+		body: options.data !== undefined ? JSON.stringify(options.data) : undefined,
 	});
 	if (response.status === 304 && options.cached?.revisionTag)
 		return options.cached;
@@ -98,6 +103,21 @@ const messages: Partial<Record<InterviewError["error"], string>> = {
 		"The review changed. Check the latest L1 decision before resolving it.",
 	revision_conflict:
 		"This record changed. Review the latest details before trying again.",
+	workspace_binding_changed:
+		"Your interview session changed. Reload this page to continue.",
+	workspace_refresh_required:
+		"Reload this page to continue with the current interview workspace.",
+	workspace_conflict:
+		"Saved work changed in another tab. Review the current workspace before trying again.",
+	workspace_invalid: "Check the content in this tool and try again.",
+	concern_limit: "This interview has reached its limit of 50 observations.",
+	workspace_incomplete:
+		"Finish the current whiteboard edit or discard its unsaved changes before ending.",
+	workspace_timeout: "The save timed out. Studio will retry it.",
+	workspace_too_large: "This workspace content is too large to save.",
+	code_run_disabled: "Code execution is disabled for this interview.",
+	code_run_pending: "A program is already running for this interview.",
+	code_run_unavailable: "Code execution is temporarily unavailable.",
 	idempotency_conflict:
 		"That action was already used for other changes. Review the current details.",
 	invalid_transition: "This action is no longer available for the round.",
@@ -119,9 +139,21 @@ const messages: Partial<Record<InterviewError["error"], string>> = {
 
 export function interviewMessage(error: unknown) {
 	if (error instanceof InterviewRequestError) {
-		if (error.status === 413)
+		if (error.status === 413 && error.problem?.error !== "workspace_too_large")
 			return "The assessment is too large. Shorten your notes or feedback and try again.";
 		const problem = error.problem;
+		if (
+			problem?.error === "workspace_invalid" &&
+			problem.kind === "code" &&
+			(problem.field === "source" || problem.field?.startsWith("drafts."))
+		)
+			return "Shorten the code to 64 KiB or remove invalid characters, then try again.";
+		if (
+			problem?.error === "workspace_invalid" &&
+			problem.kind === "code" &&
+			problem.field === "input"
+		)
+			return "Shorten the program input to 8 KiB or remove invalid characters, then try again.";
 		if (problem?.error === "too_early" && problem.opensAt) {
 			return `You can join from ${new Date(problem.opensAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} in your local time.`;
 		}

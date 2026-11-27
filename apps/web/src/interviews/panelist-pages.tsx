@@ -35,6 +35,10 @@ import {
 } from "./display";
 import { EndInterviewDialog } from "./end-dialog";
 
+import { PrivateConcerns } from "./private-concerns";
+import { useWorkspace } from "./use-workspace";
+import { WorkspaceTools } from "./workspace-tools";
+
 const staffRoute = getRouteApi("/staff");
 const listRoute = getRouteApi("/staff/my-interviews");
 const roundRoute = getRouteApi("/staff/my-interviews/$roundId");
@@ -244,6 +248,15 @@ export function PanelistRound() {
 		{ refresh },
 	);
 	const round = request?.data;
+	const workspace = useWorkspace(
+		allowed && round?.startedAt && !request?.terminal ? path : null,
+	);
+	const workspaceEnded =
+		workspace.view.descriptor?.active === false && round?.state === "active";
+	const workspaceDenied = Boolean(workspace.view.terminal);
+	useEffect(() => {
+		if (workspaceEnded || workspaceDenied) setRefresh((value) => value + 1);
+	}, [workspaceEnded, workspaceDenied]);
 	const hash = useLocation({ select: (location) => location.hash });
 	const assessmentAnchor = useRef<HTMLElement>(null);
 	const showAssessment = Boolean(
@@ -383,14 +396,32 @@ export function PanelistRound() {
 							<MeetingDetails meeting={round.meeting} />
 						</section>
 					</div>
+					{workspace.client && (
+						<WorkspaceTools
+							client={workspace.client}
+							view={workspace.view}
+							candidate={false}
+						/>
+					)}
 					{showAssessment && (
 						<section
 							id="assessment"
 							aria-label="Assessment"
 							ref={assessmentAnchor}
 							tabIndex={-1}
-							className="min-w-0 scroll-mt-4 focus:outline-none"
+							className="flex min-w-0 scroll-mt-4 flex-col gap-4 focus:outline-none"
 						>
+							{round.startedAt &&
+								round.meeting.mode === "virtual" &&
+								!workspace.view.terminal && (
+									<PrivateConcerns
+										key={`concerns:${round.id}`}
+										roundId={round.id}
+										staffId={staffId}
+										active={round.state === "active"}
+										suspended={workspace.view.hidden}
+									/>
+								)}
 							<PanelistAssessment
 								key={round.id}
 								roundId={round.id}

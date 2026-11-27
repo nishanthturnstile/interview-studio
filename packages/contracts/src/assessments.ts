@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { type Round, skillSchema } from "./drives.ts";
 
+import { isWorkspaceText } from "./interview-text.ts";
+
 const id = z.uuid().transform((value) => value.toLowerCase());
 const revision = z.number().int().min(0).max(2_147_483_647);
 const instant = z.iso.datetime();
@@ -10,8 +12,7 @@ const text = (max: number) =>
 		.max(max * 2)
 		.refine(
 			(value) =>
-				value.isWellFormed() &&
-				!value.includes("\0") &&
+				isWorkspaceText(value) &&
 				(value.length <= max || Array.from(value).length <= max),
 		);
 

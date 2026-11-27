@@ -1,27 +1,37 @@
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { serve } from "@hono/node-server";
 import {
 	type AssessmentDraft,
 	type AssessmentScorecard,
+	artifactRequestLimits,
 	assessmentScorecardSchema,
 	type BookInterview,
 	bookInterviewSchema,
 	interviewListQuerySchema,
 	type StaffIdentity,
+	workspaceBindingHeader,
+	workspaceCodeSchema,
+	workspaceDescriptorSchema,
 } from "@studio/contracts";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Hono } from "hono";
 import pg from "pg";
+import { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
+import WebSocket from "ws";
+import { createApp } from "../app.ts";
 import { changeCandidate, changeSkills } from "../drives/review.ts";
 import { drive, driveSkills } from "../drives/schema.ts";
-import { user } from "../staff/auth-schema.ts";
+import { logger } from "../logger.ts";
+import { session as staffSession, user } from "../staff/auth-schema.ts";
 import { staffGrant } from "../staff/role-schema.ts";
 import { grantStaffRole } from "../staff/roles.ts";
 import {
@@ -38,10 +48,13 @@ import {
 	getHrAssessment,
 	listAssessmentVersions,
 } from "./assessments.ts";
+import { interviewCandidateRoutes } from "./candidate-routes.ts";
 import {
 	interviewClientAddress,
 	readInterviewProxyAddresses,
 } from "./client-address.ts";
+import { codeRunQueue, processCodeRun } from "./code-runs.ts";
+import { readConcerns, saveConcern } from "./concerns.ts";
 import {
 	listDirectorScorecards,
 	readDirectorReport,
@@ -71,6 +84,8 @@ import {
 	withdrawCandidacy,
 } from "./scheduling.ts";
 import {
+	interviewArtifactRevision,
+	interviewCodeRun,
 	interviewEvent,
 	interviewProgress,
 	interviewRound,
@@ -86,6 +101,13 @@ import {
 	savePreferences,
 } from "./store.ts";
 import { resolveSlot } from "./time.ts";
+import {
+	readCandidateWorkspace,
+	readStaffWorkspace,
+	saveCandidateArtifact,
+	submitCandidateCodeRun,
+} from "./workspace.ts";
+import { WorkspaceLive } from "./workspace-live.ts";
 
 test("resolves IST, reports both repeated offsets, and rejects a skipped local time", () => {
 	const ist = resolveSlot(
@@ -154,6 +176,25 @@ test("uses the reported client address only for configured ingress peers", () =>
 		"unknown",
 	);
 	expect(() => readInterviewProxyAddresses("172.18.0.0/24")).toThrow();
+});
+
+test("validates code source by UTF-8 bytes and rejects malformed text", () => {
+	const source = "😀".repeat(16_384);
+	for (const language of ["javascript", "python", "java"]) {
+		expect(workspaceCodeSchema.safeParse({ language, source }).success).toBe(
+			true,
+		);
+		expect(
+			workspaceCodeSchema.safeParse({ language, source: `${source}x` }).success,
+		).toBe(false);
+	}
+	expect(
+		workspaceCodeSchema.safeParse({ language: "java", source: "\ud800" })
+			.success,
+	).toBe(false);
+	expect(
+		workspaceCodeSchema.safeParse({ language: "java", source: "\0" }).success,
+	).toBe(false);
 });
 
 const url = process.env.STUDIO_TEST_DATABASE_URL;
@@ -349,10 +390,11 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 					const start = new Date(Date.UTC(2032, 0, 1, 5 + index)).toISOString();
 					await tx.execute(sql`
 						insert into interview_round (id, drive_id, candidate_id, level, attempt, panelist_id, invited_email,
-							candidate_name, starts_at, ends_at, time_zone, duration, meeting, state, created_by, closed_at)
+							candidate_name, starts_at, ends_at, time_zone, duration, meeting, state, created_by, started_at, closed_at)
 						values (${id}, ${upgradeDrive}, ${candidateId}, 'l1', 1, ${staff.other}, ${email}, 'Upgrade Applicant',
 							${start}::timestamptz, ${start}::timestamptz + interval '60 minutes', 'Asia/Kolkata', 60,
 							'{"mode":"virtual","teamsUrl":null}'::jsonb, ${state}, ${staff.hr},
+							case when ${state} in ('active', 'awaiting_feedback') then ${start}::timestamptz end,
 							case when ${state} in ('awaiting_feedback', 'cancelled') then ${start}::timestamptz end)
 					`);
 					if (state === "scheduled") await createInvitation(tx, config, id);
@@ -383,6 +425,30 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			);
 		} finally {
 			await admin.end();
+		}
+	});
+
+	test("starts upgraded attempts with empty workspace heads and denies waiting staff reads", async () => {
+		const viewer = { userId: staff.other, sessionId: randomUUID() };
+		await database.insert(staffSession).values({
+			id: viewer.sessionId,
+			userId: viewer.userId,
+			token: randomUUID(),
+			expiresAt: new Date(Date.now() + 60_000),
+		});
+		for (const { id, state } of upgradeCases) {
+			const workspace = readStaffWorkspace(database, config, id, viewer);
+			if (state === "active" || state === "awaiting_feedback") {
+				await expect(workspace).resolves.toMatchObject({
+					active: state === "active",
+					heads: {
+						code: { sequence: 0, revisionId: null },
+						board: { sequence: 0, revisionId: null },
+					},
+				});
+			} else {
+				await expect(workspace).rejects.toMatchObject(interrupted("not_found"));
+			}
 		}
 	});
 
@@ -958,11 +1024,313 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 				]),
 			}),
 		);
-		const end = {
+		const empty = await readCandidateWorkspace(database, config, id, token);
+		const { binding } = empty;
+		expect(empty).toMatchObject({
+			active: true,
+			heads: {
+				code: { sequence: 0, revisionId: null },
+				board: { sequence: 0, revisionId: null },
+			},
+		});
+		const oldEnd = {
 			action: "end",
 			commandId: randomUUID(),
 			revision: 2,
 		} as const;
+		await expect(
+			candidateRound(database, config, id, token, oldEnd),
+		).rejects.toMatchObject(interrupted("workspace_refresh_required"));
+		const firstSave = {
+			commandId: randomUUID(),
+			baseSequence: 0,
+			payload: { language: "python", source: "  # 😀\n" },
+		};
+		const firstHead = await saveCandidateArtifact(
+			database,
+			config,
+			id,
+			token,
+			"code",
+			binding,
+			firstSave,
+		);
+		const secondSave = {
+			...firstSave,
+			commandId: randomUUID(),
+			baseSequence: 1,
+		};
+		const secondHead = await saveCandidateArtifact(
+			database,
+			config,
+			id,
+			token,
+			"code",
+			binding,
+			secondSave,
+		);
+		await expect(
+			saveCandidateArtifact(
+				database,
+				config,
+				id,
+				token,
+				"code",
+				binding,
+				firstSave,
+			),
+		).resolves.toEqual(firstHead);
+		await expect(
+			saveCandidateArtifact(database, config, id, token, "board", binding, {
+				...firstSave,
+				payload: { elements: [] },
+			}),
+		).rejects.toMatchObject(interrupted("idempotency_conflict"));
+		await expect(
+			saveCandidateArtifact(database, config, id, token, "code", binding, {
+				...secondSave,
+				commandId: randomUUID(),
+			}),
+		).rejects.toMatchObject(
+			interrupted("workspace_conflict", { kind: "code", head: secondHead }),
+		);
+		const board = {
+			elements: [
+				{
+					id: "mark",
+					type: "rectangle" as const,
+					x: 12,
+					y: 24,
+					width: 80,
+					height: 45,
+					strokeColor: "#123456",
+					backgroundColor: "transparent",
+					angle: 0,
+					fillStyle: "solid" as const,
+					strokeWidth: 1,
+					strokeStyle: "solid" as const,
+					seed: 8,
+					roughness: 0,
+					opacity: 100,
+					roundness: null,
+					groupIds: [],
+					boundElements: null,
+					locked: false,
+				},
+			],
+		};
+		const boardHead = await saveCandidateArtifact(
+			database,
+			config,
+			id,
+			token,
+			"board",
+			binding,
+			{
+				commandId: randomUUID(),
+				baseSequence: 0,
+				payload: board,
+			},
+		);
+		await expect(
+			saveCandidateArtifact(database, config, id, token, "board", binding, {
+				commandId: randomUUID(),
+				baseSequence: 1,
+				payload: {
+					elements: [
+						{ ...board.elements[0], link: "https://unsupported.invalid" },
+					],
+				},
+			}),
+		).rejects.toMatchObject(interrupted("workspace_invalid"));
+
+		const end = {
+			action: "end",
+			commandId: randomUUID(),
+			revision: 2,
+			binding,
+			expectedHeads: {
+				code: secondHead.revisionId,
+				board: boardHead.revisionId,
+			},
+		} as const;
+		await expect(
+			candidateRound(database, config, id, token, {
+				...end,
+				expectedHeads: {
+					code: firstHead.revisionId,
+					board: boardHead.revisionId,
+				},
+			}),
+		).rejects.toMatchObject(interrupted("workspace_conflict"));
+		await expect(
+			readCandidateWorkspace(
+				database,
+				config,
+				id,
+				token,
+				"code",
+				"A".repeat(43),
+			),
+		).rejects.toMatchObject(interrupted("workspace_binding_changed"));
+		const viewer = { userId: staff.other, sessionId: randomUUID() };
+		await database.insert(staffSession).values({
+			id: viewer.sessionId,
+			userId: viewer.userId,
+			token: randomUUID(),
+			expiresAt: new Date(Date.now() + 60_000),
+		});
+		const observation = {
+			commandId: randomUUID(),
+			context: "While diagramming an example",
+			observation: "Asked to clarify the prior answer",
+		};
+		const concern = await saveConcern(
+			database,
+			config,
+			id,
+			viewer,
+			observation,
+		);
+		await expect(readConcerns(database, config, id, viewer)).resolves.toEqual({
+			canAdd: true,
+			entries: [concern],
+		});
+
+		const assigned = await readStaffWorkspace(database, config, id, viewer);
+		expect(assigned).toMatchObject({
+			active: true,
+			heads: { code: secondHead },
+		});
+		await expect(
+			readStaffWorkspace(database, config, id, {
+				...viewer,
+				userId: staff.panelist,
+			}),
+		).rejects.toMatchObject(interrupted("not_found"));
+		const queue = new PgBoss({
+			connectionString: target.href,
+			schedule: false,
+			supervise: false,
+		});
+		try {
+			await queue.start();
+			await queue.createQueue(codeRunQueue, { policy: "singleton" });
+			const command = {
+				commandId: randomUUID(),
+				language: "python",
+				source: "print(input())\n",
+				input: "Hello\n",
+			};
+			const enabled = { ...config, codeExecutionEnabled: true };
+			const submit = (
+				data: typeof command,
+				boss: Pick<PgBoss, "send"> = queue,
+			) =>
+				submitCandidateCodeRun(
+					database,
+					enabled,
+					boss,
+					id,
+					token,
+					binding,
+					data,
+				);
+			await expect(submit(command)).rejects.toMatchObject(
+				interrupted("code_run_disabled"),
+			);
+			await database
+				.update(interviewRound)
+				.set({ codeExecutionEnabled: true })
+				.where(eq(interviewRound.id, id));
+			await expect(
+				submit(command, { send: async () => null }),
+			).rejects.toMatchObject(interrupted("code_run_unavailable"));
+			const [queued, repeated] = await Promise.all([
+				submit(command),
+				submit(command),
+			]);
+			expect(queued).toEqual(repeated);
+			expect(queued.state).toBe("queued");
+			expect(await queue.getJobById(codeRunQueue, queued.id)).toMatchObject({
+				data: { roundId: id, runId: queued.id },
+			});
+			await expect(
+				submit({ ...command, input: "different" }),
+			).rejects.toMatchObject(interrupted("idempotency_conflict"));
+			await expect(
+				submit({ ...command, commandId: randomUUID() }),
+			).rejects.toMatchObject(interrupted("code_run_pending"));
+			let dispatches = 0;
+			const execute = async (
+				program: Pick<typeof command, "language" | "source" | "input">,
+			) => {
+				dispatches++;
+				expect(program).toMatchObject({
+					language: command.language,
+					source: command.source,
+					input: command.input,
+				});
+				return {
+					state: "succeeded",
+					stdout: program.input,
+					stderr: "",
+				} as const;
+			};
+			await processCodeRun(database, id, queued.id, execute);
+			await processCodeRun(database, id, queued.id, execute);
+			await expect(
+				readStaffWorkspace(
+					database,
+					config,
+					id,
+					viewer,
+					undefined,
+					assigned.binding,
+					{ runId: queued.id },
+				),
+			).resolves.toMatchObject({ state: "succeeded", stdout: "Hello\n" });
+			const recovering = await submit({ ...command, commandId: randomUUID() });
+			await database
+				.update(interviewCodeRun)
+				.set({ state: "running" })
+				.where(eq(interviewCodeRun.id, recovering.id));
+			await processCodeRun(database, id, recovering.id, execute);
+			await expect(
+				readCandidateWorkspace(
+					database,
+					config,
+					id,
+					token,
+					undefined,
+					binding,
+					{ runId: recovering.id },
+				),
+			).resolves.toMatchObject({ state: "interrupted" });
+			const disabled = await submit({ ...command, commandId: randomUUID() });
+			await database
+				.update(interviewRound)
+				.set({ codeExecutionEnabled: false })
+				.where(eq(interviewRound.id, id));
+			await processCodeRun(database, id, disabled.id, execute);
+			await expect(
+				readCandidateWorkspace(
+					database,
+					config,
+					id,
+					token,
+					undefined,
+					binding,
+					{},
+				),
+			).resolves.toMatchObject({
+				executionEnabled: false,
+				latestRun: { id: disabled.id, state: "interrupted" },
+			});
+			expect(dispatches).toBe(1);
+		} finally {
+			await queue.stop();
+		}
 		await expect(
 			candidateRound(database, config, id, token, end),
 		).resolves.toEqual({ completed: true });
@@ -981,6 +1349,61 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 		await expect(
 			getAssignedRound(database, id, staff.other, now),
 		).resolves.toMatchObject({ state: "awaiting_feedback" });
+		await expect(
+			readCandidateWorkspace(database, config, id, token, "code", binding),
+		).rejects.toMatchObject(interrupted("unavailable"));
+		await expect(
+			readStaffWorkspace(
+				database,
+				config,
+				id,
+				viewer,
+				"code",
+				assigned.binding,
+			),
+		).resolves.toMatchObject({ ...secondHead, payload: secondSave.payload });
+		await expect(
+			readStaffWorkspace(
+				database,
+				config,
+				id,
+				viewer,
+				"board",
+				assigned.binding,
+			),
+		).resolves.toMatchObject({ ...boardHead, payload: board });
+		await expect(
+			saveConcern(database, config, id, viewer, observation),
+		).resolves.toEqual(concern);
+		await expect(
+			saveConcern(database, config, id, viewer, {
+				...observation,
+				commandId: randomUUID(),
+			}),
+		).rejects.toMatchObject(interrupted("invalid_transition"));
+		await expect(readConcerns(database, config, id, viewer)).resolves.toEqual({
+			canAdd: false,
+			entries: [concern],
+		});
+
+		const [retained] = await database
+			.select()
+			.from(interviewArtifactRevision)
+			.where(eq(interviewArtifactRevision.id, firstHead.revisionId));
+		expect(retained.payload).toEqual(firstSave.payload);
+		await database
+			.delete(staffSession)
+			.where(eq(staffSession.id, viewer.sessionId));
+		await expect(
+			readStaffWorkspace(
+				database,
+				config,
+				id,
+				viewer,
+				"code",
+				assigned.binding,
+			),
+		).rejects.toMatchObject(interrupted("not_found"));
 		expect(
 			(
 				await database
@@ -989,6 +1412,259 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 					.where(eq(interviewEvent.roundId, id))
 			).filter((event) => event.action === "end"),
 		).toHaveLength(1);
+	});
+
+	test("upgrades a bound candidate session and delivers only committed head metadata", async () => {
+		now = new Date("2031-12-12T06:21:00Z");
+		const item = await candidacy();
+		const { id } = await bookInterview(
+			database,
+			config,
+			staff.hr,
+			booking(item, { date: "2031-12-12", time: "12:00" }),
+		);
+		const entry = await invite(id, item.email);
+		const mailbox = captureMail();
+		const challenge = await requestCode(
+			database,
+			config,
+			mailbox.mail,
+			entry.id,
+			entry.input,
+		);
+		const { token } = await verifyCode(database, config, entry.id, {
+			...entry.input,
+			challengeId: challenge.challengeId,
+			code: mailbox.code(),
+		});
+		await candidateRound(database, config, id, token, {
+			action: "confirm",
+			name: "Live Test",
+			years: 1,
+		});
+		const live = new WorkspaceLive(target.href);
+		const routes = interviewCandidateRoutes(
+			database,
+			config,
+			{ trustedOrigins: [config.origin], secureCookies: false },
+			mailbox.mail,
+			live,
+		);
+		const app = createApp(
+			async () => ({ database: true, worker: true, storage: true }),
+			logger.child({}, { level: "silent" }),
+			undefined,
+			routes,
+		);
+		const { promise: bound, resolve } = Promise.withResolvers<number>();
+		const server = serve(
+			{
+				fetch: app.fetch,
+				port: 0,
+				hostname: "127.0.0.1",
+				websocket: { server: live.server },
+			},
+			({ port }) => resolve(port),
+		);
+		const port = await bound;
+		const path = `/api/interviews/rounds/${id}`;
+		const origin = `http://127.0.0.1:${port}`;
+		const cookie = `studio-candidate=${token}`;
+		let socket: WebSocket | undefined;
+		function connect(browserOrigin: string, candidateCookie?: string) {
+			return new Promise<{ status: number; socket?: WebSocket }>(
+				(resolve, reject) => {
+					const client = new WebSocket(`ws://127.0.0.1:${port}${path}/live`, {
+						origin: browserOrigin,
+						headers: {
+							...(candidateCookie ? { Cookie: candidateCookie } : {}),
+						},
+						handshakeTimeout: 2_000,
+					});
+					client.once("open", () => resolve({ status: 101, socket: client }));
+					client.once("unexpected-response", (_, response) => {
+						resolve({ status: response.statusCode ?? 0 });
+						response.resume();
+						client.terminate();
+					});
+					client.on("error", reject);
+				},
+			);
+		}
+		try {
+			expect((await connect("https://other.invalid", cookie)).status).toBe(403);
+			await expect
+				.poll(async () => (await connect(config.origin)).status)
+				.toBe(401);
+			expect((await connect(config.origin, cookie)).status).toBe(404);
+			await changeRound(database, config, staff.panelist, "panelist", id, {
+				action: "start",
+				commandId: randomUUID(),
+				revision: 0,
+			});
+			const response = await fetch(`${origin}${path}/workspace`, {
+				headers: { Cookie: cookie },
+			});
+			const { binding } = workspaceDescriptorSchema.parse(
+				await response.json(),
+			);
+			const opened = await connect(config.origin, cookie);
+			socket = opened.socket;
+			if (!socket) throw new Error(`Socket upgrade returned ${opened.status}`);
+			const nextMessage = async () => {
+				const [frame] = await once(socket as WebSocket, "message", {
+					signal: AbortSignal.timeout(2_000),
+				});
+				return JSON.parse(frame.toString());
+			};
+			const ready = nextMessage();
+			socket.send(JSON.stringify({ type: "bind", binding }));
+			expect(await ready).toEqual({ type: "ready" });
+			const changed = nextMessage();
+			const payload = JSON.stringify({
+				commandId: randomUUID(),
+				baseSequence: 0,
+				payload: { language: "java", source: "  // observable 😀" },
+			});
+			const bytes = new TextEncoder().encode(payload);
+			const exact =
+				payload + " ".repeat(artifactRequestLimits.code - bytes.byteLength);
+			const headers = {
+				Origin: config.origin,
+				Cookie: cookie,
+				[workspaceBindingHeader]: binding,
+				"Content-Type": "application/json",
+			};
+			const endpoint = `${origin}${path}/workspace/code`;
+			expect(
+				(await fetch(endpoint, { method: "POST", headers, body: `${exact} ` }))
+					.status,
+			).toBe(413);
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(bytes);
+					controller.enqueue(
+						new TextEncoder().encode(
+							" ".repeat(artifactRequestLimits.code - bytes.byteLength + 1),
+						),
+					);
+					controller.close();
+				},
+			});
+			expect(
+				(
+					await fetch(endpoint, {
+						method: "POST",
+						headers,
+						body: stream,
+						duplex: "half",
+					} as RequestInit)
+				).status,
+			).toBe(413);
+			const save = await fetch(endpoint, {
+				method: "POST",
+				headers,
+				body: exact,
+			});
+			expect(save.status).toBe(200);
+			expect(await changed).toEqual({
+				type: "head-changed",
+				kind: "code",
+				sequence: 1,
+			});
+			const replaced = nextMessage();
+			now = new Date(now.getTime() + 61_000);
+			const newChallenge = await requestCode(
+				database,
+				config,
+				mailbox.mail,
+				entry.id,
+				entry.input,
+			);
+			const replacement = await verifyCode(database, config, entry.id, {
+				...entry.input,
+				challengeId: newChallenge.challengeId,
+				code: mailbox.code(),
+			});
+			const newCookie = `studio-candidate=${replacement.token}`;
+			expect(await replaced).toEqual({ type: "access-ended" });
+			expect(
+				(
+					await fetch(`${origin}${path}/workspace`, {
+						headers: { Cookie: newCookie },
+					})
+				).status,
+			).toBe(404);
+			await candidateRound(database, config, id, replacement.token, {
+				action: "confirm",
+				name: "Replacement Session",
+				years: 2,
+			});
+			const bound = await fetch(`${origin}${path}/workspace`, {
+				headers: { Cookie: newCookie },
+			});
+			const rebound = workspaceDescriptorSchema.parse(await bound.json());
+			expect(rebound.heads.code.sequence).toBe(1);
+			expect(rebound.binding).not.toBe(binding);
+			expect(
+				(
+					await fetch(`${origin}${path}/workspace/code`, {
+						headers: { Cookie: newCookie, [workspaceBindingHeader]: binding },
+					})
+				).status,
+			).toBe(403);
+			expect(
+				(
+					await fetch(`${origin}${path}/end`, {
+						method: "POST",
+						headers: {
+							Origin: config.origin,
+							Cookie: newCookie,
+							[workspaceBindingHeader]: binding,
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({
+							commandId: randomUUID(),
+							revision: 0,
+							expectedHeads: {
+								code: rebound.heads.code.revisionId,
+								board: null,
+							},
+						}),
+					})
+				).status,
+			).toBe(403);
+			const replacementSocket = await connect(config.origin, newCookie);
+			if (!replacementSocket.socket)
+				throw new Error(
+					`Replacement socket returned ${replacementSocket.status}`,
+				);
+			socket = replacementSocket.socket;
+			const reboundReady = nextMessage();
+			socket.send(JSON.stringify({ type: "bind", binding: rebound.binding }));
+			expect(await reboundReady).toEqual({ type: "ready" });
+			const closed = nextMessage();
+			await changeRound(database, config, staff.panelist, "panelist", id, {
+				action: "end",
+				commandId: randomUUID(),
+				revision: 1,
+			});
+			expect(await closed).toEqual({ type: "access-ended" });
+			expect(
+				(
+					await fetch(`${origin}${path}/workspace/code`, {
+						headers: {
+							Cookie: newCookie,
+							[workspaceBindingHeader]: rebound.binding,
+						},
+					})
+				).status,
+			).toBe(404);
+		} finally {
+			socket?.terminate();
+			await live.stop();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
 	});
 
 	test("replaces links and sessions, retains attempt history, and permits authorized closure", async () => {
@@ -2901,6 +3577,12 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 				action: "end",
 				commandId: randomUUID(),
 				revision: 1,
+				binding:
+					state === "awaiting_feedback"
+						? (await readCandidateWorkspace(database, today, l2.id, join.token))
+								.binding
+						: undefined,
+				expectedHeads: { code: null, board: null },
 			} as const;
 			const closedAt = clock.toISOString();
 			if (state === "awaiting_feedback")

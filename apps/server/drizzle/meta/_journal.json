@@ -64,6 +64,27 @@
       "when": 1795708250195,
       "tag": "0008_slice_5_feedback_review",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795774292613,
+      "tag": "0009_slice_7_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795775476017,
+      "tag": "0010_slice_7_private_concerns",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795780887939,
+      "tag": "0011_slice_8_code_execution",
+      "breakpoints": true
     }
   ]
 }
