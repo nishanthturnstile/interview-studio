@@ -54,7 +54,7 @@ closure is part of the Slice 7 transport work.
 - Give HR queues for candidates awaiting scheduling, active interviews, feedback due, candidates ready for L2, L1 corrections pending HR review, and completed outcomes. HR can read submitted feedback across drives.
 - Give directors filters for drive, date, round, and outcome, with links to submitted scorecards. Keep progress specific to each drive. Show cancellations, no-shows, and withdrawals separately from assessment decisions.
 
-- [ ] **Done when** a director can trace a final result to both scorecards, and a candidate with an incomplete attempt, a rebooking, or a corrected decision contributes at most one current outcome per drive. Verify the same email has independent progress and totals across two drives. When a correction removes the L1 pass behind an existing L2, directors see **Pending HR review** and zero current outcomes for that candidacy until HR resolves it. Then check the total against the resolution.
+- [x] **Done when** a director can trace a final result to both scorecards, and a candidate with an incomplete attempt, a rebooking, or a corrected decision contributes at most one current outcome per drive. Verify the same email has independent progress and totals across two drives. When a correction removes the L1 pass behind an existing L2, directors see **Pending HR review** and zero current outcomes for that candidacy until HR resolves it. Then check the total against the resolution.
 
 ## 7. Add the live editor and whiteboard
 
