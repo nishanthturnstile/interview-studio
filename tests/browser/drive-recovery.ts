@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { request as openRequest } from "node:http";
 import { promisify } from "node:util";
 import { expect, type Page } from "@playwright/test";
 
@@ -335,44 +334,34 @@ export async function checkIntakeRecovery(
 		)
 		.toBe(200);
 
-	const cookie = (await hr.context().cookies())
-		.map(({ name, value }) => `${name}=${value}`)
-		.join("; ");
-	const openUpload = (name: string) => {
-		const client = openRequest(`${origin}${api}/documents?kind=resume`, {
-			method: "POST",
-			headers: { ...uploadHeaders(name, randomUUID()), cookie },
-			signal: AbortSignal.timeout(15_000),
-		});
-		const done = new Promise<number | undefined>((resolve, reject) => {
-			client.once("error", reject);
-			client.once("response", (response) => {
-				response.resume();
-				resolve(response.statusCode);
-			});
-		});
-		client.write(content.subarray(0, 8));
-		return { done, finish: () => client.end(content.subarray(8)) };
-	};
-	const slow = [openUpload("concurrent-1.pdf"), openUpload("concurrent-2.pdf")];
+	await compose("pause", "storage");
+	const slow = Promise.allSettled([
+		upload("concurrent-1.pdf"),
+		upload("concurrent-2.pdf"),
+	]);
 	try {
+		// Reservations prove both requests hold their upload slots before the competing request starts.
 		await expect
-			.poll(
-				async () => {
-					const response = await upload("competing.pdf");
-					if (response.status() !== 429) return null;
-					return {
-						retryAfter: response.headers()["retry-after"],
-						error: (await response.json()).error,
-					};
-				},
-				{ intervals: [200], timeout: 4000 },
+			.poll(() =>
+				sql(`
+				select count(*) from drive_document where drive_id = '${driveId}'
+				and upload_state = 'pending' and filename in ('concurrent-1.pdf', 'concurrent-2.pdf')
+			`),
 			)
-			.toEqual({ retryAfter: "2", error: "upload_busy" });
+			.toBe("2");
+		const competing = await upload("competing.pdf");
+		expect(competing.status()).toBe(429);
+		expect(competing.headers()["retry-after"]).toBe("2");
+		expect(await competing.json()).toEqual({ error: "upload_busy" });
 	} finally {
-		for (const request of slow) request.finish();
+		await compose("unpause", "storage");
+		await slow;
 	}
-	expect(await Promise.all(slow.map(({ done }) => done))).toEqual([201, 201]);
+	expect(
+		(await slow).map((result) =>
+			result.status === "fulfilled" ? result.value.status() : result.reason,
+		),
+	).toEqual([201, 201]);
 	await compose("stop", "worker");
 	try {
 		await sql(`

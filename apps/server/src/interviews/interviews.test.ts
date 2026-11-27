@@ -5,17 +5,22 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
+	type AssessmentDraft,
+	type AssessmentScorecard,
+	assessmentScorecardSchema,
 	type BookInterview,
 	bookInterviewSchema,
 	interviewListQuerySchema,
+	type StaffIdentity,
 } from "@studio/contracts";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Hono } from "hono";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
-import { changeCandidate } from "../drives/review.ts";
-import { drive } from "../drives/schema.ts";
+import { changeCandidate, changeSkills } from "../drives/review.ts";
+import { drive, driveSkills } from "../drives/schema.ts";
 import { user } from "../staff/auth-schema.ts";
 import { staffGrant } from "../staff/role-schema.ts";
 import { grantStaffRole } from "../staff/roles.ts";
@@ -26,16 +31,37 @@ import {
 	verifyCode,
 } from "./admission.ts";
 import {
+	changeAssessment,
+	correctAssessment,
+	getAssessmentVersion,
+	getAssignedAssessment,
+	getHrAssessment,
+	listAssessmentVersions,
+} from "./assessments.ts";
+import {
 	interviewClientAddress,
 	readInterviewProxyAddresses,
 } from "./client-address.ts";
-import { fixtureCandidacy } from "./fixture.ts";
+import {
+	listDirectorScorecards,
+	readDirectorReport,
+} from "./director-report.ts";
+import {
+	changeFeedbackReview,
+	getFeedbackReview,
+	listFeedbackReviews,
+} from "./feedback-reviews.ts";
+import { fixtureCandidacy, fixtureReviewedSkills } from "./fixture.ts";
 import {
 	findPanelists,
 	getAssignedRound,
 	getHrRound,
+	getPanelistDashboard,
 	listAssignedRounds,
 	listInterviews,
+	listInterviewTimeline,
+	listInterviewWorkspace,
+	readHrInterviewDashboard,
 	resolveStaffInvite,
 } from "./queries.ts";
 import {
@@ -44,9 +70,17 @@ import {
 	copyInvitation,
 	withdrawCandidacy,
 } from "./scheduling.ts";
-import { interviewEvent, interviewRound } from "./schema.ts";
 import {
+	interviewEvent,
+	interviewProgress,
+	interviewRound,
+	interviewSession,
+} from "./schema.ts";
+import { interviewStaffRoutes } from "./staff-routes.ts";
+import {
+	createInvitation,
 	type InterviewConfig,
+	lock,
 	lockCandidacy,
 	readPreferences,
 	savePreferences,
@@ -133,6 +167,7 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 	const database = drizzle(pool);
 	const staff = {
 		hr: randomUUID(),
+		backupHr: randomUUID(),
 		panelist: randomUUID(),
 		other: randomUUID(),
 		pending: randomUUID(),
@@ -141,6 +176,16 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 	const first = randomUUID();
 	const second = randomUUID();
 	const legacy = randomUUID();
+	const upgradeDrive = randomUUID();
+	const upgradeCases = (
+		["scheduled", "active", "awaiting_feedback", "cancelled"] as const
+	).map((state, index) => ({
+		state,
+		index,
+		id: randomUUID(),
+		candidateId: randomUUID(),
+		email: `upgrade-${state}@example.test`,
+	}));
 	const domains = new Set(["studio.test"]);
 	let now = new Date("2026-11-01T03:20:00Z");
 	const config: InterviewConfig = {
@@ -156,6 +201,17 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 	const interrupted = (error: string, extra = {}) => ({
 		body: expect.objectContaining({ error, ...extra }),
 	});
+	async function waitForLockedQuery(pattern: string) {
+		await expect
+			.poll(async () => {
+				const result = await pool.query<{ blocked: boolean }>(
+					"select exists (select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like $1) as blocked",
+					[pattern],
+				);
+				return result.rows[0].blocked;
+			})
+			.toBe(true);
+	}
 	async function candidacy(
 		driveId = first,
 		email = `${randomUUID()}@example.test`,
@@ -175,6 +231,8 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			driveId: item.driveId,
 			candidateId: item.id,
 			candidateRevision: 0,
+			workflowRevision: 0,
+			skillRevision: 1,
 			panelistId,
 			level: "l1",
 			preferenceRevision: 0,
@@ -199,6 +257,25 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 		};
 	}
 
+	function completeDraft(
+		skillIds: string[],
+		decision: NonNullable<AssessmentDraft["decision"]>,
+	): AssessmentDraft {
+		return {
+			decision,
+			rationale: "Evidence from the interview supports this decision.",
+			notes: "Private observations",
+			questions: [
+				{ id: randomUUID(), text: "How did you validate the result?" },
+			],
+			ratings: skillIds.map((skillId) => ({
+				skillId,
+				rating: "not_assessed",
+				feedback: "No signal in this round",
+			})),
+		};
+	}
+
 	beforeAll(async () => {
 		await drizzle(admin).execute(sql`create database ${sql.identifier(name)}`);
 		const previous = await mkdtemp(join(tmpdir(), "studio-slice4-upgrade-"));
@@ -206,7 +283,8 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			await cp(migrationPath, previous, { recursive: true });
 			const journalPath = join(previous, "meta", "_journal.json");
 			const journal = JSON.parse(await readFile(journalPath, "utf8"));
-			journal.entries = journal.entries.filter(
+			const entries = journal.entries;
+			journal.entries = entries.filter(
 				(entry: { idx: number }) => entry.idx < 5,
 			);
 			await writeFile(journalPath, JSON.stringify(journal));
@@ -224,6 +302,7 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			);
 			await database.insert(staffGrant).values([
 				{ role: "hr", userId: staff.hr },
+				{ role: "hr", userId: staff.backupHr },
 				{ role: "director", userId: staff.director },
 			]);
 			await database.insert(drive).values([
@@ -239,6 +318,12 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 					createdBy: staff.hr,
 					name: "Second Drive",
 				},
+				{
+					id: upgradeDrive,
+					clientKey: upgradeDrive,
+					createdBy: staff.hr,
+					name: "Upgrade Drive",
+				},
 			]);
 			await database.transaction((tx) =>
 				fixtureCandidacy(tx, staff.hr, {
@@ -248,11 +333,42 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 					email: "legacy@example.test",
 				}),
 			);
+			journal.entries = entries.filter(
+				(entry: { idx: number }) => entry.idx < 6,
+			);
+			await writeFile(journalPath, JSON.stringify(journal));
+			await migrate(database, { migrationsFolder: previous });
+			await database.transaction(async (tx) => {
+				for (const { id, candidateId, email, state, index } of upgradeCases) {
+					await fixtureCandidacy(tx, staff.hr, {
+						id: candidateId,
+						driveId: upgradeDrive,
+						name: "Upgrade Applicant",
+						email,
+					});
+					const start = new Date(Date.UTC(2032, 0, 1, 5 + index)).toISOString();
+					await tx.execute(sql`
+						insert into interview_round (id, drive_id, candidate_id, level, attempt, panelist_id, invited_email,
+							candidate_name, starts_at, ends_at, time_zone, duration, meeting, state, created_by, closed_at)
+						values (${id}, ${upgradeDrive}, ${candidateId}, 'l1', 1, ${staff.other}, ${email}, 'Upgrade Applicant',
+							${start}::timestamptz, ${start}::timestamptz + interval '60 minutes', 'Asia/Kolkata', 60,
+							'{"mode":"virtual","teamsUrl":null}'::jsonb, ${state}, ${staff.hr},
+							case when ${state} in ('awaiting_feedback', 'cancelled') then ${start}::timestamptz end)
+					`);
+					if (state === "scheduled") await createInvitation(tx, config, id);
+				}
+			});
 			await migrate(database, {
 				migrationsFolder: migrationPath,
 			});
 			await migrate(database, {
 				migrationsFolder: migrationPath,
+			});
+			await database.transaction(async (tx) => {
+				await fixtureReviewedSkills(tx, first, staff.hr);
+				await fixtureReviewedSkills(tx, second, staff.hr);
+				await fixtureReviewedSkills(tx, first, staff.hr, "l2");
+				await fixtureReviewedSkills(tx, second, staff.hr, "l2");
 			});
 		} finally {
 			await rm(previous, { recursive: true, force: true });
@@ -281,7 +397,12 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			),
 		);
 		const query = (filter: object) =>
-			listInterviews(database, interviewListQuerySchema.parse(filter), now);
+			listInterviews(
+				database,
+				interviewListQuerySchema.parse(filter),
+				now,
+				domains,
+			);
 		const legacyPage = await query({ search: "LEGACY" });
 		expect(legacyPage.items).toMatchObject([{ id: legacy, years: null }]);
 		expect((await query({ search: "legacy", minYears: 0 })).items).toHaveLength(
@@ -428,7 +549,7 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			duration: 60,
 			revision: 0,
 		});
-		await savePreferences(database, promoted, {
+		await savePreferences(database, config, promoted, {
 			...defaults,
 			timeZone: "America/New_York",
 			duration: 45,
@@ -440,6 +561,66 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			defaults,
 		);
 	});
+
+	test.each([true, false])(
+		"serializes the first preferences save with booking (booking first: %s)",
+		async (bookingFirst) => {
+			const hr = randomUUID();
+			await database.insert(user).values({
+				id: hr,
+				name: "New HR",
+				email: `${hr}@studio.test`,
+				phone: "+1 202 555 0100",
+				emailVerified: true,
+			});
+			await database.insert(staffGrant).values({ role: "hr", userId: hr });
+			const item = await candidacy();
+			const input = booking(item, {
+				date: bookingFirst ? "2036-01-01" : "2036-01-02",
+			});
+			const save = () =>
+				savePreferences(database, config, hr, {
+					timeZone: "Asia/Kolkata",
+					duration: 45,
+					revision: 0,
+				});
+			const book = () => bookInterview(database, config, hr, input);
+			const held = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const holder = database.transaction(async (tx) => {
+				await lock(tx, `interview:preferences:${hr}`);
+				held.resolve();
+				await release.promise;
+			});
+			await held.promise;
+			const winner = bookingFirst ? book() : save();
+			void winner.catch(() => {});
+			let follower:
+				| ReturnType<typeof save>
+				| ReturnType<typeof book>
+				| undefined;
+			try {
+				await waitForLockedQuery("%pg_advisory_xact_lock%");
+				follower = bookingFirst ? save() : book();
+				void follower.catch(() => {});
+				await waitForLockedQuery('%from "user" where%for update');
+			} finally {
+				release.resolve();
+				await holder;
+			}
+			if (bookingFirst) {
+				await expect(winner).resolves.toMatchObject({ id: expect.any(String) });
+				await expect(follower).resolves.toMatchObject({ revision: 1 });
+			} else {
+				await expect(winner).resolves.toMatchObject({ revision: 1 });
+				await expect(follower).rejects.toMatchObject(
+					interrupted("preferences_changed", {
+						preferences: expect.objectContaining({ revision: 1 }),
+					}),
+				);
+			}
+		},
+	);
 
 	test("requires HR to review the current candidacy before booking", async () => {
 		const item = await candidacy();
@@ -474,7 +655,9 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			candidateRevision: 1,
 		};
 		const booked = await bookInterview(database, config, staff.hr, reviewed);
-		await expect(getHrRound(database, booked.id, now)).resolves.toMatchObject({
+		await expect(
+			getHrRound(database, booked.id, now, domains),
+		).resolves.toMatchObject({
 			candidate: { email, name: "Updated Candidate", years: 6 },
 		});
 		await changeCandidate(database, item.driveId, item.id, {
@@ -674,11 +857,13 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			name: "Corrected Candidate",
 			years: 4.5,
 		});
-		expect((await getHrRound(database, id, now)).confirmedProfile).toEqual({
+		expect(
+			(await getHrRound(database, id, now, domains)).confirmedProfile,
+		).toEqual({
 			name: "Corrected Candidate",
 			years: 4.5,
 		});
-		expect((await getHrRound(database, id, now)).candidate.name).toBe(
+		expect((await getHrRound(database, id, now, domains)).candidate.name).toBe(
 			item.name,
 		);
 		await changeRound(database, config, staff.hr, "hr", id, {
@@ -713,6 +898,30 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 		await expect(
 			changeRound(database, config, staff.other, "panelist", id, start),
 		).resolves.toEqual({ id });
+		const activeAssessment = await getAssignedAssessment(
+			database,
+			config,
+			staff.other,
+			id,
+		);
+		expect(activeAssessment.canEdit).toBe(true);
+		await expect(
+			getAssignedAssessment(database, config, staff.panelist, id),
+		).rejects.toMatchObject(interrupted("not_found"));
+		await expect(
+			changeAssessment(database, config, staff.panelist, id, {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content: completeDraft(
+					activeAssessment.criteria?.skills.map(({ id }) => id) ?? [],
+					"pass",
+				),
+			}),
+		).rejects.toMatchObject(interrupted("not_found"));
+		await expect(
+			getAssignedAssessment(database, config, staff.other, id),
+		).resolves.toMatchObject({ draft: { revision: 0 } });
 		const early = await candidacy(second);
 		await expect(
 			bookInterview(
@@ -882,13 +1091,13 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 		await expect(
 			requestCode(database, config, mailbox.mail, latest.id, latest.input),
 		).rejects.toMatchObject(interrupted("invite_unavailable"));
-		const attempt = await bookInterview(
-			database,
-			config,
-			staff.hr,
-			booking(item, slot),
-		);
-		await expect(getHrRound(database, attempt.id, now)).resolves.toMatchObject({
+		const attempt = await bookInterview(database, config, staff.hr, {
+			...booking(item, slot),
+			workflowRevision: 2,
+		});
+		await expect(
+			getHrRound(database, attempt.id, now, domains),
+		).resolves.toMatchObject({
 			attempt: 2,
 		});
 		const noShow = {
@@ -902,17 +1111,48 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			changeRound(database, config, staff.hr, "hr", attempt.id, noShow),
 		).rejects.toMatchObject(interrupted("invalid_transition"));
 		now = new Date("2026-11-01T11:30:00Z");
+		await expect(
+			listInterviewWorkspace(
+				database,
+				{ tab: "queue", search: item.email, page: 1 },
+				now,
+				domains,
+			),
+		).resolves.toMatchObject({
+			items: [
+				{ id: item.id, action: "review_attendance", round: { id: attempt.id } },
+			],
+		});
 		await changeRound(database, config, staff.hr, "hr", attempt.id, noShow);
-		await expect(getHrRound(database, attempt.id, now)).resolves.toMatchObject({
+		await expect(
+			getHrRound(database, attempt.id, now, domains),
+		).resolves.toMatchObject({
 			state: "no_show",
 			absent: "candidate",
 		});
-		const third = await bookInterview(
-			database,
-			config,
-			staff.hr,
-			booking(item, { time: "17:30" }),
-		);
+		await expect(
+			listInterviewWorkspace(
+				database,
+				{ tab: "history", search: item.email, page: 1 },
+				now,
+				domains,
+			),
+		).resolves.toMatchObject({ items: [] });
+		await expect(
+			listInterviewTimeline(
+				database,
+				{ driveId: item.driveId, candidateId: item.id },
+				1,
+				now,
+				domains,
+			),
+		).resolves.toMatchObject({
+			items: [{ state: "cancelled" }, { state: "no_show" }],
+		});
+		const third = await bookInterview(database, config, staff.hr, {
+			...booking(item, { time: "17:30" }),
+			workflowRevision: 4,
+		});
 		await changeRound(database, config, staff.hr, "hr", third.id, {
 			action: "withdraw",
 			revision: 0,
@@ -928,7 +1168,12 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			config,
 			staff.hr,
 			{ driveId: unbooked.driveId, candidateId: unbooked.id },
-			{ revision: 0, commandId: randomUUID(), reason: "Candidate withdrew." },
+			{
+				revision: 0,
+				workflowRevision: 0,
+				commandId: randomUUID(),
+				reason: "Candidate withdrew.",
+			},
 		);
 		await expect(
 			bookInterview(database, config, staff.hr, booking(unbooked, slot)),
@@ -987,7 +1232,9 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			await expect(
 				candidateRound(database, config, active, token, { action: "read" }),
 			).rejects.toMatchObject(interrupted("unavailable"));
-			await expect(getHrRound(database, active, now)).resolves.toMatchObject({
+			await expect(
+				getHrRound(database, active, now, domains),
+			).resolves.toMatchObject({
 				state: actor === "withdraw" ? "withdrawn" : "awaiting_feedback",
 			});
 		}
@@ -1056,6 +1303,7 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			commandId: randomUUID(),
 			revision: 0,
 			reason: "Candidate withdrew",
+			workflowRevision: 0,
 		};
 		await changeCandidate(database, item.driveId, item.id, {
 			type: "save",
@@ -1153,16 +1401,2272 @@ describe.skipIf(!url)("interview workflows on PostgreSQL", () => {
 			database,
 			{ ...filters, page: 1 },
 			date,
+			domains,
 		);
 		const hrSecond = await listInterviews(
 			database,
 			{ ...filters, page: 2 },
 			date,
+			domains,
 		);
 		expect(hrFirst.total).toBe(26);
 		expect(hrFirst.items.slice(0, 3).map(({ id }) => id)).toEqual(currentIds);
 		expect(hrSecond.items.map(({ id }) => id)).toEqual(
 			[6, 5, 4, 3, 2, 0].map((index) => rounds[index].id),
 		);
+
+		const feedbackRounds = [0, 2, 3, 4].map((index) => rounds[index].id);
+		await database
+			.update(interviewRound)
+			.set({ state: "awaiting_feedback", closedAt: sql`${interviewRound.end}` })
+			.where(inArray(interviewRound.id, feedbackRounds));
+		const arriving = rounds[24];
+		await database.transaction((tx) =>
+			createInvitation(tx, config, arriving.id),
+		);
+		const entry = await invite(arriving.id, arriving.invitedEmail);
+		await database.insert(interviewSession).values({
+			roundId: arriving.id,
+			invitationId: entry.id,
+			tokenHash: randomUUID(),
+			admittedAt: date,
+			confirmedAt: date,
+			lastSeenAt: date,
+		});
+		const assignee = panelistId[0].id;
+		const dashboard = await getPanelistDashboard(database, assignee, date);
+		expect(dashboard.attention).toMatchObject({
+			total: 6,
+			items: [
+				{ id: rounds[1].id, state: "active" },
+				{ id: arriving.id, state: "scheduled", connected: true },
+				{ id: feedbackRounds[0], state: "awaiting_feedback" },
+			],
+		});
+		expect(dashboard.upcoming).toMatchObject({
+			total: 1,
+			items: [{ id: rounds[25].id }],
+		});
+		const attention = await listAssignedRounds(
+			database,
+			assignee,
+			date,
+			1,
+			"attention",
+		);
+		expect(attention.items.map(({ id }) => id)).toEqual([
+			rounds[1].id,
+			arriving.id,
+			...feedbackRounds,
+		]);
+		const disconnected = await getPanelistDashboard(
+			database,
+			assignee,
+			new Date(date.getTime() + 31_000),
+		);
+		expect(disconnected.upcoming.items.map(({ id }) => id)).toEqual([
+			arriving.id,
+			rounds[25].id,
+		]);
+		expect(disconnected.attention.total).toBe(5);
 	});
+
+	test.each(["pass", "do_not_proceed", "incomplete"] as const)(
+		"preserves and submits L1 %s with the correct scheduling outcome",
+		async (decision) => {
+			const slots = {
+				pass: "10:00",
+				do_not_proceed: "11:00",
+				incomplete: "12:00",
+			};
+			const item = await candidacy();
+			const request = booking(item, {
+				date: "2033-01-01",
+				time: slots[decision],
+			});
+			const { id } = await bookInterview(database, config, staff.hr, request);
+			const read = () =>
+				getAssignedAssessment(database, config, staff.panelist, id);
+			const send = (input: Parameters<typeof changeAssessment>[4]) =>
+				changeAssessment(database, config, staff.panelist, id, input);
+			const command = {
+				commandId: randomUUID(),
+				action: "submit",
+				draftRevision: 0,
+				attemptRevision: 0,
+			} as const;
+			const booked = await read();
+			expect(booked).toMatchObject({
+				criteria: { skillRevision: 1, source: "booking" },
+				canSubmit: false,
+				canEdit: false,
+			});
+			await expect(
+				getAssignedAssessment(database, config, staff.other, id),
+			).rejects.toMatchObject(interrupted("not_found"));
+			await expect(
+				getHrAssessment(database, config, staff.hr, id),
+			).rejects.toMatchObject(interrupted("not_found"));
+			await expect(send(command)).rejects.toMatchObject(
+				interrupted("invalid_transition"),
+			);
+			await database
+				.update(interviewRound)
+				.set({ state: "active" })
+				.where(eq(interviewRound.id, id));
+			const content = completeDraft(
+				booked.criteria?.skills.map(({ id }) => id) ?? [],
+				decision,
+			);
+			const save = {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content,
+			} as const;
+			await expect(
+				changeAssessment(database, config, staff.other, id, save),
+			).rejects.toMatchObject(interrupted("not_found"));
+			await expect(
+				changeAssessment(database, config, staff.hr, id, save),
+			).rejects.toMatchObject(interrupted("not_found"));
+			await expect(
+				send({
+					...save,
+					content: {
+						...content,
+						ratings: [
+							{ skillId: randomUUID(), rating: "not_assessed", feedback: "" },
+						],
+					},
+				}),
+			).rejects.toMatchObject(interrupted("invalid_input"));
+			await send(save);
+			await send(save);
+			await expect(read()).resolves.toMatchObject({
+				draft: { revision: 1, content },
+			});
+			await expect(
+				send({ ...save, commandId: randomUUID() }),
+			).rejects.toMatchObject(
+				interrupted("draft_changed", {
+					assessment: expect.objectContaining({
+						draft: expect.objectContaining({ revision: 1, content }),
+					}),
+				}),
+			);
+			await expect(
+				send({ ...command, draftRevision: 1 }),
+			).rejects.toMatchObject(interrupted("invalid_transition"));
+			await changeRound(database, config, staff.panelist, "panelist", id, {
+				action: "end",
+				commandId: randomUUID(),
+				revision: 0,
+			});
+			await expect(
+				send({ ...command, attemptRevision: 1 }),
+			).rejects.toMatchObject(interrupted("draft_changed"));
+			await expect(
+				send({ ...command, draftRevision: 1 }),
+			).rejects.toMatchObject(
+				interrupted("revision_conflict", {
+					assessment: expect.objectContaining({
+						attemptRevision: 1,
+						canSubmit: true,
+					}),
+				}),
+			);
+			const submit = { ...command, draftRevision: 1, attemptRevision: 1 };
+			const [version, retry] = await Promise.all([send(submit), send(submit)]);
+			expect(retry).toEqual(version);
+			await expect(
+				send({ ...submit, commandId: randomUUID() }),
+			).rejects.toMatchObject(interrupted("invalid_transition"));
+			await expect(read()).resolves.toMatchObject({
+				canEdit: false,
+				canSubmit: false,
+				draft: { content },
+				submitted: {
+					...version,
+					decision,
+					version: 1,
+					author: { id: staff.panelist },
+				},
+			});
+			const hr = await getHrAssessment(database, config, staff.hr, id);
+			expect(hr.submitted).toMatchObject({
+				decision,
+				ratings: content.ratings,
+			});
+			expect(hr).not.toHaveProperty("draft");
+			expect(hr.submitted).not.toHaveProperty("notes");
+			expect(hr.submitted).not.toHaveProperty("questions");
+			const readTab = (tab: "queue" | "history") =>
+				listInterviews(
+					database,
+					interviewListQuerySchema.parse({ tab, search: item.email }),
+					now,
+					domains,
+				);
+			await expect(readTab("history")).resolves.toMatchObject({
+				items: [{ id, state: "feedback_submitted", decision }],
+			});
+			const rebook = {
+				...request,
+				commandId: randomUUID(),
+				workflowRevision: 2,
+			};
+			if (decision === "incomplete") {
+				await expect(readTab("queue")).resolves.toMatchObject({
+					items: [
+						{ id: item.id, level: "l1", lastAttempt: 1, workflowRevision: 2 },
+					],
+				});
+				await expect(
+					bookInterview(database, config, staff.hr, {
+						...rebook,
+						workflowRevision: 1,
+					}),
+				).rejects.toMatchObject(interrupted("workflow_changed"));
+				const fresh = await bookInterview(database, config, staff.hr, rebook);
+				expect(fresh.id).not.toBe(id);
+				await expect(
+					getHrRound(database, fresh.id, now, domains),
+				).resolves.toMatchObject({ attempt: 2 });
+				await expect(read()).resolves.toMatchObject({
+					draft: { content },
+					submitted: version,
+				});
+			} else {
+				await expect(readTab("queue")).resolves.toMatchObject({
+					items:
+						decision === "pass"
+							? [
+									{
+										id: item.id,
+										level: "l2",
+										lastAttempt: 0,
+										workflowRevision: 2,
+										qualifyingL1RoundId: id,
+									},
+								]
+							: [],
+				});
+				await expect(
+					bookInterview(database, config, staff.hr, rebook),
+				).rejects.toMatchObject(interrupted("round_not_eligible"));
+			}
+		},
+	);
+
+	test("preserves upgraded rounds, allows closure before skills review, and freezes each snapshot once", async () => {
+		const [scheduled, active, awaiting, cancelled] = upgradeCases;
+		const today = { ...config, clock: () => new Date("2032-01-01T05:10:00Z") };
+		const read = (id: string) =>
+			getAssignedAssessment(database, today, staff.other, id);
+		const initialize = (id: string) =>
+			changeAssessment(database, today, staff.other, id, {
+				action: "initialize",
+				commandId: randomUUID(),
+			});
+		await expect(read(scheduled.id)).resolves.toMatchObject({
+			status: "unavailable",
+		});
+		await expect(read(cancelled.id)).resolves.toMatchObject({
+			status: "unavailable",
+		});
+		await expect(read(active.id)).resolves.toMatchObject({
+			status: "skills_need_review",
+		});
+		await expect(initialize(active.id)).rejects.toMatchObject(
+			interrupted("skills_need_review"),
+		);
+		const close = (id: string, revision: number) =>
+			changeRound(database, today, staff.other, "panelist", id, {
+				action: "end",
+				commandId: randomUUID(),
+				revision,
+			});
+		await close(active.id, 0);
+		const oldInvite = await invite(scheduled.id, scheduled.email);
+		const mailbox = captureMail();
+		const challenge = await requestCode(
+			database,
+			today,
+			mailbox.mail,
+			oldInvite.id,
+			oldInvite.input,
+		);
+		const { token } = await verifyCode(database, today, oldInvite.id, {
+			...oldInvite.input,
+			challengeId: challenge.challengeId,
+			code: mailbox.code(),
+		});
+		await candidateRound(database, today, scheduled.id, token, {
+			action: "confirm",
+			name: "Upgraded Applicant",
+			years: null,
+		});
+		await changeRound(database, today, staff.other, "panelist", scheduled.id, {
+			action: "start",
+			revision: 0,
+			commandId: randomUUID(),
+		});
+		await database.transaction((tx) =>
+			fixtureReviewedSkills(tx, upgradeDrive, staff.hr),
+		);
+		const [opened, retried] = await Promise.all([
+			initialize(scheduled.id),
+			initialize(scheduled.id),
+		]);
+		expect(retried).toEqual(opened);
+		await close(scheduled.id, 1);
+		const original = (await read(scheduled.id)).criteria;
+		expect(original).toMatchObject({
+			source: "after_booking",
+			skillRevision: 1,
+		});
+		if (!original) throw new Error("Missing legacy criteria");
+		const staffLocked = Promise.withResolvers<void>();
+		const releaseStaff = Promise.withResolvers<void>();
+		const staffLock = database.transaction(async (tx) => {
+			await tx
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.id, staff.other))
+				.for("update");
+			staffLocked.resolve();
+			await releaseStaff.promise;
+		});
+		await staffLocked.promise;
+		const initializing = initialize(active.id);
+		let saving: ReturnType<typeof changeSkills> | undefined;
+		try {
+			await waitForLockedQuery('%from "user" where%for update');
+			saving = changeSkills(database, upgradeDrive, "l1", {
+				type: "save",
+				input: {
+					revision: 1,
+					skills: original.skills
+						.toReversed()
+						.map(({ id, name }) => ({ id, name: `Revised ${name}` })),
+				},
+			});
+			await waitForLockedQuery('%from "drive_skills" where%for update');
+		} finally {
+			releaseStaff.resolve();
+			await staffLock;
+		}
+		const [, edited] = await Promise.all([initializing, saving]);
+		if (!edited) throw new Error("Skills save did not run");
+		await expect(initialize(awaiting.id)).rejects.toMatchObject(
+			interrupted("skills_need_review"),
+		);
+		await expect(read(active.id)).resolves.toMatchObject({
+			criteria: original,
+		});
+		const candidacyLocked = Promise.withResolvers<void>();
+		const releaseCandidacy = Promise.withResolvers<void>();
+		const candidacyLock = database.transaction(async (tx) => {
+			await lockCandidacy(tx, upgradeDrive, awaiting.candidateId);
+			candidacyLocked.resolve();
+			await releaseCandidacy.promise;
+		});
+		await candidacyLocked.promise;
+		const waiting = initialize(awaiting.id);
+		let reviewed: Awaited<ReturnType<typeof changeSkills>>;
+		try {
+			await waitForLockedQuery(
+				'%from "drive_candidate" where%for no key update',
+			);
+			reviewed = await changeSkills(database, upgradeDrive, "l1", {
+				type: "review",
+				reviewerId: staff.hr,
+				input: { revision: edited.revision },
+			});
+		} finally {
+			releaseCandidacy.resolve();
+			await candidacyLock;
+		}
+		await waiting;
+		await expect(read(awaiting.id)).resolves.toMatchObject({
+			criteria: {
+				source: "after_booking",
+				skills: reviewed.skills,
+				skillRevision: reviewed.revision,
+			},
+		});
+		for (const { id } of [scheduled, active, awaiting]) {
+			const view = await read(id);
+			const content = completeDraft(
+				view.criteria?.skills.map((skill) => skill.id) ?? [],
+				"pass",
+			);
+			await changeAssessment(database, today, staff.other, id, {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content,
+			});
+			await changeAssessment(database, today, staff.other, id, {
+				action: "submit",
+				commandId: randomUUID(),
+				draftRevision: 1,
+				attemptRevision: view.attemptRevision,
+			});
+			await expect(read(id)).resolves.toMatchObject({
+				submitted: { decision: "pass" },
+			});
+		}
+		const next = await candidacy(upgradeDrive);
+		const newRequest = booking(next, { date: "2033-02-01", time: "10:00" });
+		await expect(
+			bookInterview(database, config, staff.hr, newRequest),
+		).rejects.toMatchObject(
+			interrupted("skills_changed", { criteria: reviewed }),
+		);
+		const fresh = await bookInterview(database, config, staff.hr, {
+			...newRequest,
+			skillRevision: reviewed.revision,
+		});
+		await expect(
+			getAssignedAssessment(database, config, staff.panelist, fresh.id),
+		).resolves.toMatchObject({
+			criteria: {
+				source: "booking",
+				skills: reviewed.skills,
+				skillRevision: reviewed.revision,
+			},
+		});
+	});
+
+	test.each([
+		["active", "2033-03-01"],
+		["awaiting_feedback", "2033-03-02"],
+		["feedback_submitted", "2033-03-03"],
+	] as const)(
+		"checks HR recovery after a panelist changes roles in %s",
+		async (state, date) => {
+			const item = await candidacy();
+			const panelistId = randomUUID();
+			await database.insert(user).values({
+				id: panelistId,
+				name: "Temporary panelist",
+				email: `${panelistId}@studio.test`,
+				phone: "+1 202 555 0100",
+				emailVerified: true,
+			});
+			const request = booking(item, { date, time: "10:00" }, panelistId);
+			const { id } = await bookInterview(database, config, staff.hr, request);
+			await database
+				.update(interviewRound)
+				.set({ state: "active" })
+				.where(eq(interviewRound.id, id));
+			const starting = await getAssignedAssessment(
+				database,
+				config,
+				panelistId,
+				id,
+			);
+			const content = completeDraft(
+				starting.criteria?.skills.map(({ id }) => id) ?? [],
+				"incomplete",
+			);
+			await changeAssessment(database, config, panelistId, id, {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content,
+			});
+			const cancel = {
+				action: "cancel_unavailable_panelist",
+				revision: 1,
+				commandId: randomUUID(),
+				reason: "Panelist changed roles",
+			} as const;
+			const hrChange = (input: Parameters<typeof changeRound>[5]) =>
+				changeRound(database, config, staff.hr, "hr", id, input);
+			const close = () =>
+				hrChange({ action: "end", revision: 0, commandId: randomUUID() });
+			if (state !== "active") {
+				await close();
+				await expect(hrChange(cancel)).rejects.toMatchObject(
+					interrupted("invalid_transition"),
+				);
+				expect(
+					(await getHrRound(database, id, now, domains))
+						.canCancelUnavailablePanelist,
+				).toBe(false);
+			}
+			const submit = {
+				action: "submit",
+				commandId: randomUUID(),
+				draftRevision: 1,
+				attemptRevision: 1,
+			} as const;
+			if (state === "feedback_submitted")
+				await changeAssessment(database, config, panelistId, id, submit);
+			await grantStaffRole(database, domains, staff.director, panelistId, "hr");
+			await expect(
+				getAssignedAssessment(database, config, panelistId, id),
+			).rejects.toMatchObject(interrupted("forbidden"));
+			if (state === "feedback_submitted") {
+				await expect(
+					hrChange({ ...cancel, revision: 2 }),
+				).rejects.toMatchObject(interrupted("invalid_transition"));
+				await expect(
+					getHrAssessment(database, config, staff.hr, id),
+				).resolves.toMatchObject({
+					submitted: { decision: "incomplete", version: 1 },
+				});
+				return;
+			}
+			if (state === "active") {
+				await expect(
+					hrChange({ ...cancel, revision: 0 }),
+				).rejects.toMatchObject(interrupted("invalid_transition"));
+				await close();
+			}
+			const closed = await getHrRound(database, id, now, domains);
+			expect(closed.canCancelUnavailablePanelist).toBe(true);
+			await expect(
+				listInterviewWorkspace(
+					database,
+					{ tab: "queue", search: item.email, page: 1 },
+					now,
+					domains,
+				),
+			).resolves.toMatchObject({
+				items: [{ id: item.id, action: "replace_panelist", round: { id } }],
+			});
+			await expect(
+				listInterviewWorkspace(
+					database,
+					{ tab: "awaiting", search: item.email, page: 1 },
+					now,
+					domains,
+				),
+			).resolves.toMatchObject({ items: [] });
+			await expect(
+				changeAssessment(database, config, panelistId, id, submit),
+			).rejects.toMatchObject(interrupted("forbidden"));
+			await hrChange(cancel);
+			await expect(hrChange(cancel)).resolves.toEqual({ id });
+			const [cancelled] = await database
+				.select()
+				.from(interviewRound)
+				.where(eq(interviewRound.id, id));
+			expect(cancelled).toMatchObject({
+				cancellationCode: "panelist_unavailable",
+				cancelledAt: now,
+			});
+			await expect(
+				getHrRound(database, id, now, domains),
+			).resolves.toMatchObject({
+				state: "cancelled",
+				closedAt: closed.closedAt,
+				reason: cancel.reason,
+				canCancelUnavailablePanelist: false,
+			});
+			await expect(
+				getHrAssessment(database, config, staff.hr, id),
+			).rejects.toMatchObject(interrupted("not_found"));
+			const next = await bookInterview(database, config, staff.hr, {
+				...request,
+				commandId: randomUUID(),
+				panelistId: staff.panelist,
+				workflowRevision: 2,
+			});
+			await expect(
+				getAssignedAssessment(database, config, staff.panelist, next.id),
+			).resolves.toMatchObject({
+				draft: { revision: 0, content: { notes: "", questions: [] } },
+			});
+			await database
+				.delete(staffGrant)
+				.where(eq(staffGrant.userId, panelistId));
+			await expect(
+				getAssignedAssessment(database, config, panelistId, id),
+			).resolves.toMatchObject({
+				canEdit: false,
+				canSubmit: false,
+				draft: { revision: 1, content },
+			});
+			await expect(
+				getAssignedAssessment(database, config, staff.panelist, id),
+			).rejects.toMatchObject(interrupted("not_found"));
+		},
+	);
+
+	test("serializes bookings with changes to reviewed drive skills in either order", async () => {
+		const driveId = randomUUID();
+		await database.transaction(async (tx) => {
+			await tx.insert(drive).values({
+				id: driveId,
+				clientKey: driveId,
+				createdBy: staff.hr,
+				name: "Snapshot Race Drive",
+			});
+			await fixtureReviewedSkills(tx, driveId, staff.hr);
+		});
+		const first = await candidacy(driveId);
+		const second = await candidacy(driveId);
+		const editSkills = (revision: number) =>
+			changeSkills(database, driveId, "l1", {
+				type: "save",
+				input: { revision, skills: [{ name: `Updated criteria ${revision}` }] },
+			});
+		const { promise: staffLocked, resolve: signalStaffLock } =
+			Promise.withResolvers<void>();
+		const { promise: releaseStaff, resolve: unlockStaff } =
+			Promise.withResolvers<void>();
+		const staffLock = database.transaction(async (tx) => {
+			await tx
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.id, staff.panelist))
+				.for("update");
+			signalStaffLock();
+			await releaseStaff;
+		});
+		await staffLocked;
+		const bookingFirst = bookInterview(
+			database,
+			config,
+			staff.hr,
+			booking(first, { date: "2033-04-01", time: "10:00" }),
+		);
+		let editing: ReturnType<typeof editSkills> | undefined;
+		try {
+			await expect
+				.poll(async () => {
+					try {
+						await database.transaction((tx) =>
+							tx
+								.select({ id: driveSkills.driveId })
+								.from(driveSkills)
+								.where(eq(driveSkills.driveId, driveId))
+								.for("update", { noWait: true }),
+						);
+						return false;
+					} catch (error) {
+						return (
+							(error as { cause?: { code?: string } }).cause?.code === "55P03"
+						);
+					}
+				})
+				.toBe(true);
+			editing = editSkills(1);
+		} finally {
+			unlockStaff();
+			await staffLock;
+		}
+		const [{ id }, firstEdit] = await Promise.all([bookingFirst, editing]);
+		expect(firstEdit).toMatchObject({ revision: 2, reviewedAt: null });
+		await expect(
+			getAssignedAssessment(database, config, staff.panelist, id),
+		).resolves.toMatchObject({
+			criteria: {
+				skillRevision: 1,
+				skills: [{ name: "Technical reasoning" }, { name: "Communication" }],
+			},
+		});
+		const reviewed = await changeSkills(database, driveId, "l1", {
+			type: "review",
+			reviewerId: staff.hr,
+			input: { revision: 2 },
+		});
+		const request = {
+			...booking(second, { date: "2033-04-01", time: "11:00" }),
+			skillRevision: reviewed.revision,
+		};
+		const { promise: candidacyLocked, resolve: signalCandidacyLock } =
+			Promise.withResolvers<void>();
+		const { promise: releaseCandidacy, resolve: unlockCandidacy } =
+			Promise.withResolvers<void>();
+		const candidacyLock = database.transaction(async (tx) => {
+			await lockCandidacy(tx, driveId, second.id);
+			signalCandidacyLock();
+			await releaseCandidacy;
+		});
+		await candidacyLocked;
+		const bookingSecond = expect(
+			bookInterview(database, config, staff.hr, request),
+		).rejects.toMatchObject(
+			interrupted("skills_need_review", {
+				criteria: expect.objectContaining({ revision: 4, reviewedAt: null }),
+			}),
+		);
+		try {
+			await editSkills(reviewed.revision);
+		} finally {
+			unlockCandidacy();
+			await candidacyLock;
+		}
+		await bookingSecond;
+	});
+
+	test("accepts every draft field at its limit with escaped supplementary Unicode", async () => {
+		const driveId = randomUUID();
+		const skills = Array.from({ length: 50 }, (_, index) => ({
+			id: randomUUID(),
+			name: `Skill ${index + 1}`,
+		}));
+		await database.transaction(async (tx) => {
+			await tx.insert(drive).values({
+				id: driveId,
+				clientKey: driveId,
+				createdBy: staff.hr,
+				name: "Maximum Assessment Drive",
+			});
+			await tx.insert(driveSkills).values({
+				driveId,
+				round: "l1",
+				revision: 1,
+				reviewedAt: now,
+				reviewedBy: staff.hr,
+				skills,
+			});
+		});
+		const item = await candidacy(driveId);
+		const { id } = await bookInterview(
+			database,
+			config,
+			staff.hr,
+			booking(item, { date: "2033-05-01" }),
+		);
+		await database
+			.update(interviewRound)
+			.set({ state: "active" })
+			.where(eq(interviewRound.id, id));
+		const app = new Hono<{ Variables: { staff: StaffIdentity } }>();
+		app.use("*", async (context, next) => {
+			context.set("staff", {
+				id: staff.panelist,
+				name: "Panelist",
+				email: `${staff.panelist}@studio.test`,
+				role: "panelist",
+			});
+			await next();
+		});
+		app.route("/", interviewStaffRoutes(database, config));
+		const content: AssessmentDraft = {
+			decision: "pass",
+			rationale: "🧭".repeat(2_000),
+			notes: "🧭".repeat(16_000),
+			questions: skills.map(() => ({
+				id: randomUUID(),
+				text: "🧭".repeat(500),
+			})),
+			ratings: skills.map(({ id }) => ({
+				skillId: id,
+				rating: "meets_expectations",
+				feedback: "🧭".repeat(500),
+			})),
+		};
+		const body = JSON.stringify({
+			commandId: randomUUID(),
+			draftRevision: 0,
+			content,
+		}).replaceAll("🧭", "\\ud83e\\udded");
+		expect(Buffer.byteLength(body)).toBeGreaterThan(512 * 1024);
+		const saved = await app.request(`/my-interviews/${id}/assessment/draft`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body,
+		});
+		expect(saved.status).toBe(200);
+		const view = await getAssignedAssessment(
+			database,
+			config,
+			staff.panelist,
+			id,
+		);
+		expect(view.draft).toMatchObject({ revision: 1, content });
+	});
+
+	test.each(["selected", "not_selected", "incomplete"] as const)(
+		"books L2 after an L1 pass and handles %s",
+		async (decision) => {
+			const dates = {
+				selected: "2033-06-01",
+				not_selected: "2033-06-02",
+				incomplete: "2033-06-03",
+			};
+			const date = dates[decision];
+			const driveId = randomUUID();
+			await database.transaction(async (tx) => {
+				await tx.insert(drive).values({
+					id: driveId,
+					clientKey: driveId,
+					createdBy: staff.hr,
+					name: "Two-round Drive",
+				});
+				await fixtureReviewedSkills(tx, driveId, staff.hr);
+			});
+			const item = await candidacy(driveId);
+			const sameEmail = await candidacy(
+				second,
+				item.email,
+				"Independent Candidate",
+			);
+			const book = (input: BookInterview) =>
+				bookInterview(database, config, staff.hr, input);
+			const read = (id: string, assignee: string = staff.other) =>
+				getAssignedAssessment(database, config, assignee, id);
+			const send = (
+				id: string,
+				assignee: string,
+				input: Parameters<typeof changeAssessment>[4],
+			) => changeAssessment(database, config, assignee, id, input);
+			const list = (filters: object) =>
+				listInterviews(
+					database,
+					interviewListQuerySchema.parse({ search: item.email, ...filters }),
+					now,
+					domains,
+				);
+			const l2Request: BookInterview = {
+				...booking(item, { date, time: "11:00" }, staff.other),
+				level: "l2",
+				workflowRevision: 2,
+			};
+			await expect(book(l2Request)).rejects.toMatchObject(
+				interrupted("round_not_eligible"),
+			);
+			const l1 = await book(booking(item, { date }));
+			const l1Link = await invite(l1.id, item.email);
+			const prepareFeedback = (id: string) =>
+				database
+					.update(interviewRound)
+					.set({ state: "awaiting_feedback", revision: 1, closedAt: now })
+					.where(eq(interviewRound.id, id));
+			await prepareFeedback(l1.id);
+			const l1View = await read(l1.id, staff.panelist);
+			const l1Draft = completeDraft(
+				l1View.criteria?.skills.map(({ id }) => id) ?? [],
+				"pass",
+			);
+			const save = {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content: l1Draft,
+			} as const;
+			await expect(
+				send(l1.id, staff.panelist, {
+					...save,
+					content: { ...l1Draft, decision: "selected" },
+				}),
+			).rejects.toMatchObject(
+				interrupted("invalid_input", { field: "decision" }),
+			);
+			await send(l1.id, staff.panelist, save);
+			const l1Version = await send(l1.id, staff.panelist, {
+				action: "submit",
+				commandId: randomUUID(),
+				attemptRevision: 1,
+				draftRevision: 1,
+			});
+			await expect(list({ level: "l2" })).resolves.toMatchObject({
+				total: 1,
+				items: [
+					{
+						id: item.id,
+						level: "l2",
+						qualifyingL1RoundId: l1.id,
+						criteria: { round: "l2", skills: [], reviewedAt: null },
+					},
+				],
+			});
+			await expect(list({ level: "l1" })).resolves.toMatchObject({
+				total: 1,
+				items: [{ id: sameEmail.id, level: "l1" }],
+			});
+			await expect(book(l2Request)).rejects.toMatchObject(
+				interrupted("skills_need_review"),
+			);
+			await database.transaction((tx) =>
+				fixtureReviewedSkills(tx, driveId, staff.hr, "l2"),
+			);
+			await expect(
+				book({ ...l2Request, workflowRevision: 1 }),
+			).rejects.toMatchObject(interrupted("workflow_changed"));
+			const results = await Promise.allSettled([
+				book(l2Request),
+				book({ ...l2Request, commandId: randomUUID() }),
+			]);
+			const l2 = results.find((result) => result.status === "fulfilled")?.value;
+			if (!l2) throw new Error("No L2 booking committed");
+			expect(
+				results.filter((result) => result.status === "rejected"),
+			).toMatchObject([{ reason: interrupted("round_not_eligible") }]);
+			expect(l2.id).not.toBe(l1.id);
+			expect((await invite(l2.id, item.email)).id).not.toBe(l1Link.id);
+			await expect(read(l2.id, staff.panelist)).rejects.toMatchObject(
+				interrupted("not_found"),
+			);
+			const scheduled = await read(l2.id);
+			expect(scheduled).toMatchObject({
+				canEdit: false,
+				criteria: {
+					skills: [{ name: "System design" }, { name: "Decision-making" }],
+				},
+				l1Handoff: { submitted: { id: l1Version.id, decision: "pass" } },
+			});
+			expect(scheduled.l1Handoff).not.toHaveProperty("draft");
+			expect(scheduled.l1Handoff?.submitted).not.toHaveProperty("notes");
+			expect(scheduled.l1Handoff?.submitted).not.toHaveProperty("questions");
+			await prepareFeedback(l2.id);
+			const content = completeDraft(
+				scheduled.criteria?.skills.map(({ id }) => id) ?? [],
+				decision,
+			);
+			const draft = {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content,
+			} as const;
+			await expect(
+				send(l2.id, staff.other, {
+					...draft,
+					content: { ...content, decision: "pass" },
+				}),
+			).rejects.toMatchObject(
+				interrupted("invalid_input", { field: "decision" }),
+			);
+			await send(l2.id, staff.other, draft);
+			const updateL1 = async (previousVersionId: string) => {
+				const result = await correctAssessment(
+					database,
+					config,
+					staff.panelist,
+					l1.id,
+					correction(
+						previousVersionId,
+						assessmentScorecardSchema.parse(l1Draft),
+						"pass",
+					),
+				);
+				return result.id;
+			};
+			const latestL1Id =
+				decision === "selected" ? await updateL1(l1Version.id) : l1Version.id;
+			const submit = {
+				action: "submit",
+				commandId: randomUUID(),
+				attemptRevision: 1,
+				draftRevision: 1,
+			} as const;
+			await expect(send(l2.id, staff.other, submit)).rejects.toMatchObject(
+				interrupted("l1_handoff_changed", {
+					assessment: expect.objectContaining({
+						l1Handoff: expect.objectContaining({
+							submitted: expect.objectContaining({ id: latestL1Id }),
+						}),
+					}),
+				}),
+			);
+			if (latestL1Id !== l1Version.id)
+				await expect(
+					send(l2.id, staff.other, {
+						...submit,
+						reviewedL1VersionId: l1Version.id,
+					}),
+				).rejects.toMatchObject(interrupted("l1_handoff_changed"));
+			const submitted = await send(l2.id, staff.other, {
+				...submit,
+				reviewedL1VersionId: latestL1Id,
+			});
+			if (decision === "selected") await updateL1(latestL1Id);
+			await expect(read(l2.id)).resolves.toMatchObject({
+				submitted: {
+					id: submitted.id,
+					decision,
+					reviewedL1VersionId: latestL1Id,
+				},
+				l1Handoff: { submitted: { id: latestL1Id } },
+			});
+			await expect(
+				getHrAssessment(database, config, staff.hr, l2.id),
+			).resolves.toMatchObject({
+				submitted: { decision, reviewedL1VersionId: latestL1Id },
+			});
+			if (decision !== "incomplete") {
+				await expect(list({ level: "l2" })).resolves.toMatchObject({
+					total: 0,
+				});
+				await expect(
+					book({ ...l2Request, commandId: randomUUID(), workflowRevision: 4 }),
+				).rejects.toMatchObject(interrupted("round_not_eligible"));
+				return;
+			}
+			await expect(list({ level: "l2" })).resolves.toMatchObject({
+				total: 1,
+				items: [
+					{ id: item.id, level: "l2", lastAttempt: 1, workflowRevision: 4 },
+				],
+			});
+			const rebook = {
+				...l2Request,
+				slot: { ...l2Request.slot, time: "12:00" },
+				commandId: randomUUID(),
+				workflowRevision: 4,
+			};
+			const fresh = await book(rebook);
+			await expect(
+				getHrRound(database, fresh.id, now, domains),
+			).resolves.toMatchObject({ attempt: 2, level: "l2" });
+			await expect(
+				getHrRound(database, l2.id, now, domains),
+			).resolves.toMatchObject({ superseded: true });
+			await changeRound(database, config, staff.hr, "hr", fresh.id, {
+				action: "reassign",
+				commandId: randomUUID(),
+				panelistId: staff.panelist,
+				revision: 0,
+			});
+			await expect(read(fresh.id)).rejects.toMatchObject(
+				interrupted("not_found"),
+			);
+			await expect(read(fresh.id, staff.panelist)).resolves.toMatchObject({
+				l1Handoff: { submitted: { id: latestL1Id } },
+			});
+			await changeRound(database, config, staff.hr, "hr", fresh.id, {
+				action: "withdraw",
+				commandId: randomUUID(),
+				revision: 1,
+				reason: "Candidate withdrew",
+			});
+			await expect(read(fresh.id, staff.panelist)).resolves.toMatchObject({
+				l1Handoff: null,
+			});
+			await expect(read(l2.id)).resolves.toMatchObject({
+				l1Handoff: { submitted: { id: latestL1Id } },
+			});
+			const [progress] = await database
+				.select()
+				.from(interviewProgress)
+				.where(eq(interviewProgress.candidateId, item.id));
+			expect(progress).toMatchObject({
+				currentL2RoundId: null,
+				l1VersionId: latestL1Id,
+				revision: 6,
+			});
+			await expect(list({ level: "l2" })).resolves.toMatchObject({ total: 0 });
+		},
+	);
+	test("rechecks an HR booker's role after waiting and before replaying a receipt", async () => {
+		const [booked, waiting] = await Promise.all([candidacy(), candidacy()]);
+		const actor = randomUUID();
+		await database.insert(user).values({
+			id: actor,
+			name: "Promoted booker",
+			email: `${actor}@studio.test`,
+			phone: "+1 202 555 0100",
+			emailVerified: true,
+		});
+		await database.insert(staffGrant).values({ userId: actor, role: "hr" });
+		const bookedRequest = booking(booked, { date: "2034-01-01" });
+		await bookInterview(database, config, actor, bookedRequest);
+
+		const locked = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const hold = database.transaction(async (tx) => {
+			await lockCandidacy(tx, waiting.driveId, waiting.id);
+			locked.resolve();
+			await release.promise;
+		});
+		await locked.promise;
+		const pending = expect(
+			bookInterview(
+				database,
+				config,
+				actor,
+				booking(waiting, { date: "2034-01-02" }),
+			),
+		).rejects.toMatchObject(interrupted("forbidden"));
+		try {
+			await grantStaffRole(
+				database,
+				domains,
+				staff.director,
+				actor,
+				"director",
+			);
+		} finally {
+			release.resolve();
+			await hold;
+		}
+		await pending;
+		await expect(
+			bookInterview(database, config, actor, bookedRequest),
+		).rejects.toMatchObject(interrupted("forbidden"));
+	});
+
+	async function prepareReviewCase(date: string, driveId = first) {
+		const item = await candidacy(driveId);
+		const l1 = await bookInterview(
+			database,
+			config,
+			staff.hr,
+			booking(item, { date }),
+		);
+		const { content, version } = await submitRoundForReview(
+			l1.id,
+			staff.panelist,
+			"pass",
+		);
+		const l2Request: BookInterview = {
+			...booking(item, { date, time: "11:00" }, staff.other),
+			level: "l2",
+			workflowRevision: 2,
+		};
+		return {
+			item,
+			l1,
+			l1Version: version,
+			l1Scorecard: assessmentScorecardSchema.parse(content),
+			l2Request,
+			bookL2: () => bookInterview(database, config, staff.hr, l2Request),
+			queue: () =>
+				listInterviews(
+					database,
+					interviewListQuerySchema.parse({ search: item.email }),
+					now,
+					domains,
+				),
+		};
+	}
+
+	async function submitRoundForReview(
+		id: string,
+		panelist: string,
+		decision: AssessmentScorecard["decision"],
+		reviewedL1VersionId?: string,
+	) {
+		await database
+			.update(interviewRound)
+			.set({ state: "awaiting_feedback", revision: 1, closedAt: now })
+			.where(eq(interviewRound.id, id));
+		const { criteria } = await getAssignedAssessment(
+			database,
+			config,
+			panelist,
+			id,
+		);
+		const content = completeDraft(
+			criteria?.skills.map(({ id }) => id) ?? [],
+			decision,
+		);
+		await changeAssessment(database, config, panelist, id, {
+			action: "draft",
+			commandId: randomUUID(),
+			draftRevision: 0,
+			content,
+		});
+		const version = await changeAssessment(database, config, panelist, id, {
+			action: "submit",
+			commandId: randomUUID(),
+			attemptRevision: 1,
+			draftRevision: 1,
+			reviewedL1VersionId,
+		});
+		return { content, version };
+	}
+
+	function correction(
+		expectedVersionId: string,
+		scorecard: AssessmentScorecard,
+		decision: AssessmentScorecard["decision"],
+		rationale = "Reevaluated the evidence.",
+	) {
+		return {
+			commandId: randomUUID(),
+			expectedVersionId,
+			reason: "Reviewed the scoring evidence again.",
+			scorecard: { ...scorecard, decision, rationale },
+		};
+	}
+
+	test("reports one current outcome and preserves the exact submitted evidence across an HR review", async () => {
+		const driveId = randomUUID();
+		const otherDriveId = randomUUID();
+		await database.transaction(async (tx) => {
+			await tx.insert(drive).values([
+				{
+					id: driveId,
+					clientKey: driveId,
+					createdBy: staff.hr,
+					name: "Director reporting",
+				},
+				{
+					id: otherDriveId,
+					clientKey: otherDriveId,
+					createdBy: staff.hr,
+					name: "Independent report",
+				},
+			]);
+			for (const round of ["l1", "l2"] as const)
+				await fixtureReviewedSkills(tx, driveId, staff.hr, round);
+		});
+		const { item, l1, l1Version, l1Scorecard, bookL2, l2Request } =
+			await prepareReviewCase("2035-02-17", driveId);
+		const independent = await candidacy(otherDriveId, item.email, item.name);
+		const query = { driveId, page: 1 };
+		const scope = { driveId, candidateId: item.id };
+		const evidence = () => listDirectorScorecards(database, scope, 1);
+		const cancelled = await bookL2();
+		await changeRound(database, config, staff.hr, "hr", cancelled.id, {
+			action: "cancel",
+			revision: 0,
+			commandId: randomUUID(),
+		});
+		const l2 = await bookInterview(database, config, staff.hr, {
+			...l2Request,
+			commandId: randomUUID(),
+			workflowRevision: 4,
+		});
+		await changeRound(database, config, staff.hr, "hr", l2.id, {
+			action: "reschedule",
+			commandId: randomUUID(),
+			revision: 0,
+			slot: { ...l2Request.slot, time: "11:30" },
+		});
+		const rescheduledOn = "2035-02-18";
+		await database
+			.update(interviewEvent)
+			.set({ createdAt: new Date(`${rescheduledOn}T00:00:00Z`) })
+			.where(
+				and(
+					eq(interviewEvent.roundId, l2.id),
+					eq(interviewEvent.action, "reschedule"),
+				),
+			);
+		await expect(
+			readDirectorReport(database, {
+				...query,
+				from: rescheduledOn,
+				to: rescheduledOn,
+			}),
+		).resolves.toMatchObject({
+			items: [{ id: item.id, activityDate: rescheduledOn }],
+		});
+		const cancelledOn = now.toISOString().slice(0, 10);
+		await expect(
+			readDirectorReport(database, {
+				...query,
+				from: cancelledOn,
+				to: cancelledOn,
+			}),
+		).resolves.toMatchObject({ items: [], cancelled: 1 });
+		await expect(readDirectorReport(database, query)).resolves.toMatchObject({
+			totals: { in_progress: 1, selected: 0 },
+			cancelled: 1,
+			items: [{ id: item.id, status: "in_progress", round: "l2" }],
+		});
+		await expect(evidence()).resolves.toMatchObject({
+			items: [{ roundId: l1.id, versionId: l1Version.id }],
+		});
+		await expect(
+			getAssessmentVersion(
+				database,
+				config,
+				staff.director,
+				"director",
+				l2.id,
+				l1Version.id,
+			),
+		).rejects.toMatchObject(interrupted("not_found"));
+		const { version: selected } = await submitRoundForReview(
+			l2.id,
+			staff.other,
+			"selected",
+			l1Version.id,
+		);
+		const finalized = await readDirectorReport(database, query);
+		expect(finalized.totals).toMatchObject({ in_progress: 0, selected: 1 });
+		expect(finalized.items).toMatchObject([
+			{ id: item.id, status: "selected", round: "l2", hasScorecards: true },
+		]);
+		expect(finalized.cancelled).toBe(1);
+		await expect(
+			readDirectorReport(database, { driveId: otherDriveId, page: 1 }),
+		).resolves.toMatchObject({
+			totals: { in_progress: 1, selected: 0 },
+			cancelled: 0,
+			items: [
+				{
+					id: independent.id,
+					status: "in_progress",
+					round: "l1",
+					hasScorecards: false,
+				},
+			],
+		});
+		await expect(
+			listInterviewWorkspace(
+				database,
+				{
+					tab: "queue",
+					page: 1,
+					driveId: otherDriveId,
+					search: "",
+				},
+				now,
+				domains,
+			),
+		).resolves.toMatchObject({
+			items: [
+				{
+					id: independent.id,
+					action: "review_skills",
+					eligible: { id: independent.id },
+				},
+			],
+		});
+		const dashboard = await readHrInterviewDashboard(database, now, domains);
+		for (const tab of ["queue", "scheduled", "awaiting", "history"] as const) {
+			const workspace = await listInterviewWorkspace(
+				database,
+				{ tab, page: 1, search: "" },
+				now,
+				domains,
+			);
+			expect(dashboard[tab]).toEqual({
+				total: workspace.total,
+				items: workspace.items.slice(0, 3),
+			});
+		}
+		const date = finalized.items[0].activityDate;
+		await expect(
+			readDirectorReport(database, {
+				...query,
+				round: "l2",
+				from: date,
+				to: date,
+				outcome: "selected",
+			}),
+		).resolves.toMatchObject({ items: [{ id: item.id }] });
+		await expect(
+			readDirectorReport(database, { ...query, round: "l1" }),
+		).resolves.toMatchObject({ items: [] });
+
+		await correctAssessment(
+			database,
+			config,
+			staff.panelist,
+			l1.id,
+			correction(l1Version.id, l1Scorecard, "do_not_proceed"),
+		);
+		await expect(readDirectorReport(database, query)).resolves.toMatchObject({
+			totals: { pending_review: 1, selected: 0, do_not_proceed: 0 },
+			items: [{ id: item.id, status: "pending_review", hasScorecards: true }],
+		});
+		const cards = await evidence();
+		expect(cards.items).toMatchObject([
+			{ roundId: l1.id, decision: "do_not_proceed" },
+			{
+				roundId: l2.id,
+				versionId: selected.id,
+				attempt: 2,
+				decision: "selected",
+			},
+		]);
+		const detail = await getAssessmentVersion(
+			database,
+			config,
+			staff.director,
+			"director",
+			l2.id,
+			selected.id,
+		);
+		expect(detail).toMatchObject({
+			submitted: { reviewedL1VersionId: l1Version.id },
+			l1Handoff: { submitted: { id: l1Version.id, decision: "pass" } },
+		});
+		expect(JSON.stringify(detail)).not.toMatch(
+			/Private observations|How did you validate the result\?|teamsUrl|invitedEmail/,
+		);
+		await expect(
+			listDirectorScorecards(database, { ...scope, driveId: second }, 1),
+		).rejects.toMatchObject(interrupted("not_found"));
+		const review = await latestReview(item.id);
+		await changeFeedbackReview(
+			database,
+			config,
+			staff.hr,
+			review.id,
+			resolutionCommand(review),
+		);
+		await expect(readDirectorReport(database, query)).resolves.toMatchObject({
+			totals: { pending_review: 0, selected: 0, do_not_proceed: 1 },
+			items: [{ id: item.id, status: "do_not_proceed", round: "l1" }],
+		});
+		await expect(
+			readDirectorReport(database, {
+				...query,
+				round: "l2",
+				outcome: "do_not_proceed",
+			}),
+		).resolves.toMatchObject({ items: [], cancelled: 1 });
+	});
+
+	async function latestReview(candidateId: string) {
+		const inbox = await listFeedbackReviews(database, config, staff.hr, 1);
+		const entry = inbox.items.find(
+			(review) =>
+				review.candidate.id === candidateId && review.kind === "pass_reversed",
+		);
+		if (!entry) throw new Error("Expected an open review");
+		return getFeedbackReview(database, config, staff.hr, entry.id);
+	}
+
+	function resolutionCommand(
+		detail: Awaited<ReturnType<typeof getFeedbackReview>>,
+	) {
+		if (!detail.availableResolution)
+			throw new Error("Expected a resolution action");
+		const commandId = randomUUID();
+		return {
+			action: "resolve" as const,
+			commandId,
+			resolution: {
+				commandId,
+				expectedL1VersionId: detail.latestL1.id,
+				expectedRevision: detail.revision,
+				action: detail.availableResolution.action,
+				reason: "Reviewed the scorecards and confirmed the outcome.",
+			},
+		};
+	}
+
+	test.each(["scheduled", "active", "awaiting_feedback"] as const)(
+		"cancels %s L2 and revokes admitted candidate access when L1 is reversed",
+		async (state) => {
+			const date = {
+				scheduled: "2035-02-01",
+				active: "2035-02-02",
+				awaiting_feedback: "2035-02-03",
+			}[state];
+			const scenario = await prepareReviewCase(date);
+			const { item, l1, l1Version, l1Scorecard, l2Request } = scenario;
+			const l2 = await scenario.bookL2();
+			const entry = await invite(l2.id, item.email);
+			let clock = new Date(`${date}T05:31:00Z`);
+			const today = { ...config, clock: () => clock };
+			const mailbox = captureMail();
+			const sendCode = () =>
+				requestCode(database, today, mailbox.mail, entry.id, entry.input);
+			const firstCode = await sendCode();
+			const join = await verifyCode(database, today, entry.id, {
+				...entry.input,
+				challengeId: firstCode.challengeId,
+				code: mailbox.code(),
+			});
+			await candidateRound(database, today, l2.id, join.token, {
+				action: "confirm",
+				name: item.name,
+				years: null,
+			});
+			if (state !== "scheduled") {
+				await changeRound(database, today, staff.other, "panelist", l2.id, {
+					action: "start",
+					commandId: randomUUID(),
+					revision: 0,
+				});
+				const { draft } = await getAssignedAssessment(
+					database,
+					today,
+					staff.other,
+					l2.id,
+				);
+				if (!draft) throw new Error("Expected L2 draft");
+				await changeAssessment(database, today, staff.other, l2.id, {
+					action: "draft",
+					commandId: randomUUID(),
+					draftRevision: 0,
+					content: { ...draft.content, notes: "Preserved L2 private work" },
+				});
+			}
+			clock = new Date(clock.getTime() + 61_000);
+			const pendingCode = await sendCode();
+			const exchange = {
+				...entry.input,
+				challengeId: pendingCode.challengeId,
+				code: mailbox.code(),
+			};
+			const close = {
+				action: "end",
+				commandId: randomUUID(),
+				revision: 1,
+			} as const;
+			const closedAt = clock.toISOString();
+			if (state === "awaiting_feedback")
+				await candidateRound(database, today, l2.id, join.token, close);
+			clock = new Date(clock.getTime() + 1_000);
+			const reverse = correction(l1Version.id, l1Scorecard, "do_not_proceed");
+			const reversed = await correctAssessment(
+				database,
+				today,
+				staff.panelist,
+				l1.id,
+				reverse,
+			);
+			await expect(
+				correctAssessment(database, today, staff.panelist, l1.id, reverse),
+			).resolves.toEqual(reversed);
+			const review = await latestReview(item.id);
+			expect(review).toMatchObject({
+				l2: { id: l2.id },
+				l2Version: null,
+				previousL1: { id: l1Version.id },
+				latestL1: { id: reversed.id },
+				availableResolution: { action: "apply_l1", outcome: "do_not_proceed" },
+			});
+			await expect(
+				getHrRound(database, l2.id, clock, domains),
+			).resolves.toMatchObject({
+				state: "cancelled",
+				effectiveOutcome: null,
+				pendingReviewId: review.id,
+				closedAt:
+					state === "awaiting_feedback" ? closedAt : clock.toISOString(),
+				confirmedProfile: { name: item.name },
+			});
+			await expect(
+				candidateRound(database, today, l2.id, join.token, {
+					action: "presence",
+				}),
+			).rejects.toMatchObject(interrupted("unavailable"));
+			await expect(
+				verifyCode(database, today, entry.id, exchange),
+			).rejects.toMatchObject(interrupted("invite_unavailable"));
+			await expect(sendCode()).rejects.toMatchObject(
+				interrupted("invite_unavailable"),
+			);
+			if (state === "awaiting_feedback")
+				await expect(
+					candidateRound(database, today, l2.id, join.token, close),
+				).resolves.toEqual({ completed: true });
+			const cancelled = await getAssignedAssessment(
+				database,
+				today,
+				staff.other,
+				l2.id,
+			);
+			expect(cancelled).toMatchObject({
+				l1Handoff: null,
+				canEdit: false,
+				draft: {
+					content: {
+						notes: state === "scheduled" ? "" : "Preserved L2 private work",
+					},
+				},
+			});
+			await expect(
+				bookInterview(database, config, staff.hr, {
+					...l2Request,
+					commandId: randomUUID(),
+				}),
+			).rejects.toMatchObject(interrupted("pending_feedback_review"));
+			await expect(
+				withdrawCandidacy(
+					database,
+					config,
+					staff.hr,
+					{ driveId: item.driveId, candidateId: item.id },
+					{
+						revision: 0,
+						workflowRevision: 4,
+						commandId: randomUUID(),
+						reason: "Candidate withdrew",
+					},
+				),
+			).rejects.toMatchObject(interrupted("pending_feedback_review"));
+			await expect(
+				changeAssessment(database, today, staff.other, l2.id, {
+					action: "submit",
+					commandId: randomUUID(),
+					draftRevision: 1,
+					attemptRevision: 2,
+				}),
+			).rejects.toMatchObject(interrupted("pending_feedback_review"));
+			await expect(
+				changeCandidate(database, item.driveId, item.id, {
+					type: "save",
+					input: { revision: 0, name: "Updated" },
+				}),
+			).rejects.toMatchObject(interrupted("pending_feedback_review"));
+			await expect(scenario.queue()).resolves.toMatchObject({ total: 0 });
+
+			const restored = await correctAssessment(
+				database,
+				today,
+				staff.panelist,
+				l1.id,
+				correction(reversed.id, l1Scorecard, "pass"),
+			);
+			const latest = await latestReview(item.id);
+			expect(latest).toMatchObject({
+				id: review.id,
+				revision: review.revision + 1,
+				triggerL1: { id: reversed.id },
+				latestL1: { id: restored.id },
+				availableResolution: { action: "rebook_l2", outcome: "schedule_l2" },
+			});
+			await expect(
+				changeFeedbackReview(
+					database,
+					today,
+					staff.hr,
+					review.id,
+					resolutionCommand(review),
+				),
+			).rejects.toMatchObject(
+				interrupted("feedback_review_changed", {
+					review: expect.objectContaining({ revision: latest.revision }),
+				}),
+			);
+			await changeFeedbackReview(
+				database,
+				today,
+				staff.hr,
+				review.id,
+				resolutionCommand(latest),
+			);
+			const queue = await scenario.queue();
+			if (queue.tab !== "queue") throw new Error("Expected queue");
+			const [bookable] = queue.items;
+			const retry = await bookInterview(database, config, staff.hr, {
+				...l2Request,
+				commandId: randomUUID(),
+				workflowRevision: bookable.workflowRevision,
+			});
+			await expect(
+				getHrRound(database, retry.id, clock, domains),
+			).resolves.toMatchObject({ attempt: 2, level: "l2" });
+			expect((await invite(retry.id, item.email)).id).not.toBe(entry.id);
+		},
+	);
+
+	test.each([
+		{ outcome: "selected", resolver: "hr", date: "2035-03-01" },
+		{ outcome: "incomplete", resolver: "hr", date: "2035-03-02" },
+		{ outcome: "do_not_proceed", resolver: "hr", date: "2035-03-03" },
+		{ outcome: "schedule_l1", resolver: "hr", date: "2035-03-04" },
+		{ outcome: "selected", resolver: "backupHr", date: "2035-03-05" },
+	] as const)(
+		"resolves a review after submitted L2 to $outcome with $resolver first",
+		async ({ outcome, resolver, date }) => {
+			const scenario = await prepareReviewCase(date);
+			const { item, l1, l1Version, l1Scorecard, l2Request } = scenario;
+			const l2 = await scenario.bookL2();
+			const l2Decision = outcome === "incomplete" ? "incomplete" : "selected";
+			const l2Result = await submitRoundForReview(
+				l2.id,
+				staff.other,
+				l2Decision,
+				l1Version.id,
+			);
+			const l2Scorecard = assessmentScorecardSchema.parse(l2Result.content);
+			const l2Corrected = await correctAssessment(
+				database,
+				config,
+				staff.other,
+				l2.id,
+				correction(l2Result.version.id, l2Scorecard, l2Decision),
+			);
+			const loss = outcome === "schedule_l1" ? "incomplete" : "do_not_proceed";
+			const reversed = await correctAssessment(
+				database,
+				config,
+				staff.panelist,
+				l1.id,
+				correction(l1Version.id, l1Scorecard, loss),
+			);
+			const review = await latestReview(item.id);
+			expect(review.l2Version?.id).toBe(l2Corrected.id);
+			await expect(
+				getHrRound(database, l2.id, now, domains),
+			).resolves.toMatchObject({
+				state: "feedback_submitted",
+				effectiveOutcome: null,
+				pendingReviewId: review.id,
+			});
+			await expect(
+				correctAssessment(
+					database,
+					config,
+					staff.other,
+					l2.id,
+					correction(l2Corrected.id, l2Scorecard, l2Decision),
+				),
+			).rejects.toMatchObject(interrupted("pending_feedback_review"));
+			await expect(
+				getFeedbackReview(database, config, staff.other, review.id),
+			).rejects.toMatchObject(interrupted("forbidden"));
+			await expect(
+				getAssessmentVersion(
+					database,
+					config,
+					staff.other,
+					"panelist",
+					l2.id,
+					l2Result.version.id,
+				),
+			).resolves.toMatchObject({
+				l1Handoff: { submitted: { id: l1Version.id } },
+			});
+			await expect(
+				getAssessmentVersion(
+					database,
+					config,
+					staff.other,
+					"panelist",
+					l2.id,
+					l1Version.id,
+				),
+			).rejects.toMatchObject(interrupted("not_found"));
+			const reinstating = outcome === "selected" || outcome === "incomplete";
+			if (reinstating)
+				await correctAssessment(
+					database,
+					config,
+					staff.panelist,
+					l1.id,
+					correction(reversed.id, l1Scorecard, "pass"),
+				);
+			const latest = await latestReview(item.id);
+			const apply = resolutionCommand(latest);
+			const actor = staff[resolver];
+			const resolve = () =>
+				changeFeedbackReview(database, config, actor, review.id, apply);
+			if (outcome === "selected") {
+				const other = resolver === "hr" ? staff.backupHr : staff.hr;
+				const [winner, follower] = await runInCandidacyOrder(
+					item,
+					actor,
+					resolve,
+					() =>
+						changeFeedbackReview(
+							database,
+							config,
+							other,
+							review.id,
+							resolutionCommand(latest),
+						),
+				);
+				expect(winner).toEqual({
+					status: "fulfilled",
+					value: { id: review.id },
+				});
+				expect(follower).toMatchObject({
+					status: "rejected",
+					reason: interrupted("feedback_review_changed"),
+				});
+			} else {
+				await resolve();
+			}
+			await expect(resolve()).resolves.toEqual({ id: review.id });
+			await expect(
+				getFeedbackReview(database, config, staff.hr, review.id),
+			).resolves.toMatchObject({
+				resolution: {
+					outcome: outcome === "incomplete" ? "schedule_l2" : outcome,
+					resolvedBy: { id: actor },
+					appliedL1VersionId: latest.latestL1.id,
+					reinstatedL2VersionId: reinstating ? l2Corrected.id : null,
+				},
+			});
+			await expect(
+				getHrRound(database, l2.id, now, domains),
+			).resolves.toMatchObject({
+				effectiveOutcome:
+					outcome === "selected" || outcome === "do_not_proceed"
+						? outcome
+						: null,
+				pendingReviewId: null,
+				superseded: !reinstating,
+			});
+			await expect(
+				getAssessmentVersion(
+					database,
+					config,
+					staff.hr,
+					"hr",
+					l2.id,
+					l2Corrected.id,
+				),
+			).resolves.toMatchObject({
+				submitted: { reviewedL1VersionId: l1Version.id },
+				l1Handoff: { submitted: { id: l1Version.id } },
+			});
+			const versions = await listAssessmentVersions(
+				database,
+				config,
+				staff.panelist,
+				"panelist",
+				l1.id,
+				1,
+			);
+			expect(versions.items[0].id).toBe(latest.latestL1.id);
+			expect(versions.items.at(-1)?.id).toBe(l1Version.id);
+			const queue = await scenario.queue();
+			if (queue.tab !== "queue") throw new Error("Expected queue");
+			if (outcome === "schedule_l1" || outcome === "incomplete") {
+				const [next] = queue.items;
+				const level = outcome === "schedule_l1" ? "l1" : "l2";
+				expect(next.level).toBe(level);
+				const fresh = await bookInterview(database, config, staff.hr, {
+					...l2Request,
+					level,
+					commandId: randomUUID(),
+					workflowRevision: next.workflowRevision,
+				});
+				await expect(
+					getHrRound(database, fresh.id, now, domains),
+				).resolves.toMatchObject({ attempt: 2, level });
+				const olderCorrection =
+					level === "l1"
+						? correctAssessment(
+								database,
+								config,
+								staff.panelist,
+								l1.id,
+								correction(latest.latestL1.id, l1Scorecard, "pass"),
+							)
+						: correctAssessment(
+								database,
+								config,
+								staff.other,
+								l2.id,
+								correction(l2Corrected.id, l2Scorecard, l2Decision),
+							);
+				await expect(olderCorrection).rejects.toMatchObject(
+					interrupted("invalid_transition"),
+				);
+			} else expect(queue.total).toBe(0);
+		},
+	);
+
+	test("records a passing update, resolves a reversed rebook, and keeps retired feedback read-only", async () => {
+		const scenario = await prepareReviewCase("2035-04-01");
+		const { item, l1, l1Version, l1Scorecard, l2Request } = scenario;
+		const originalL2 = await scenario.bookL2();
+		const originalResult = await submitRoundForReview(
+			originalL2.id,
+			staff.other,
+			"incomplete",
+			l1Version.id,
+		);
+		const replacement = await bookInterview(database, config, staff.hr, {
+			...l2Request,
+			commandId: randomUUID(),
+			workflowRevision: 4,
+		});
+		const correct = (head: string, decision: AssessmentScorecard["decision"]) =>
+			correctAssessment(
+				database,
+				config,
+				staff.panelist,
+				l1.id,
+				correction(head, l1Scorecard, decision),
+			);
+		const updated = await correct(l1Version.id, "pass");
+		const inbox = await listFeedbackReviews(database, config, staff.hr, 1);
+		const notification = inbox.items.find(
+			(entry) =>
+				entry.kind === "handoff_updated" && entry.candidate.id === item.id,
+		);
+		if (!notification)
+			throw new Error("Expected an informational notification");
+		await expect(
+			getFeedbackReview(database, config, staff.hr, notification.id),
+		).resolves.toMatchObject({
+			l2: { id: replacement.id },
+			latestL1: { id: updated.id },
+			availableResolution: null,
+		});
+		await expect(
+			getAssignedAssessment(database, config, staff.other, replacement.id),
+		).resolves.toMatchObject({ l1Handoff: { submitted: { id: updated.id } } });
+		await expect(
+			getAssignedAssessment(database, config, staff.other, originalL2.id),
+		).resolves.toMatchObject({
+			l1Handoff: { submitted: { id: l1Version.id } },
+			submitted: { id: originalResult.version.id },
+		});
+		const acknowledge = {
+			action: "acknowledge",
+			commandId: randomUUID(),
+		} as const;
+		await changeFeedbackReview(
+			database,
+			config,
+			staff.hr,
+			notification.id,
+			acknowledge,
+		);
+		const secondHr = randomUUID();
+		await database.insert(user).values({
+			id: secondHr,
+			name: "Second HR",
+			email: `${secondHr}@studio.test`,
+			phone: "+1 202 555 0100",
+			emailVerified: true,
+		});
+		await database.insert(staffGrant).values({ userId: secondHr, role: "hr" });
+		await changeFeedbackReview(database, config, secondHr, notification.id, {
+			...acknowledge,
+			commandId: randomUUID(),
+		});
+		await expect(
+			getFeedbackReview(database, config, staff.hr, notification.id),
+		).resolves.toMatchObject({ acknowledgment: { readBy: { id: staff.hr } } });
+		expect(
+			(await listFeedbackReviews(database, config, secondHr, 1)).items.some(
+				({ id }) => id === notification.id,
+			),
+		).toBe(false);
+		await expect(correct(l1Version.id, "do_not_proceed")).rejects.toMatchObject(
+			interrupted("feedback_version_changed"),
+		);
+		const reversed = await correct(updated.id, "do_not_proceed");
+		const present = await latestReview(item.id);
+		expect(present).toMatchObject({
+			l2: { id: replacement.id },
+			l2Version: null,
+			triggerL1: { id: reversed.id },
+		});
+		await changeFeedbackReview(
+			database,
+			config,
+			staff.hr,
+			present.id,
+			resolutionCommand(present),
+		);
+		const reopened = await correct(reversed.id, "pass");
+		const lostAgain = await correct(reopened.id, "do_not_proceed");
+		expect(
+			(await listFeedbackReviews(database, config, staff.hr, 1)).items.some(
+				(review) => review.candidate.id === item.id,
+			),
+		).toBe(false);
+		const newPass = await correct(lostAgain.id, "pass");
+		const queue = await scenario.queue();
+		if (queue.tab !== "queue") throw new Error("Expected queue");
+		const fresh = await bookInterview(database, config, staff.hr, {
+			...l2Request,
+			commandId: randomUUID(),
+			workflowRevision: queue.items[0].workflowRevision,
+		});
+		const nextLoss = await correct(newPass.id, "do_not_proceed");
+		const nextReview = await latestReview(item.id);
+		expect(nextReview.id).not.toBe(present.id);
+		expect(nextReview.l2.id).toBe(fresh.id);
+		const restored = await correct(nextLoss.id, "pass");
+		await changeFeedbackReview(
+			database,
+			config,
+			staff.hr,
+			nextReview.id,
+			resolutionCommand(await latestReview(item.id)),
+		);
+		const finalQueue = await scenario.queue();
+		if (finalQueue.tab !== "queue") throw new Error("Expected queue");
+		await withdrawCandidacy(
+			database,
+			config,
+			staff.hr,
+			{ driveId: item.driveId, candidateId: item.id },
+			{
+				commandId: randomUUID(),
+				reason: "Candidate withdrew.",
+				revision: 0,
+				workflowRevision: finalQueue.items[0].workflowRevision,
+			},
+		);
+		await expect(
+			getAssignedAssessment(database, config, staff.panelist, l1.id),
+		).resolves.toMatchObject({ canCorrect: false });
+		await expect(correct(restored.id, "pass")).rejects.toMatchObject(
+			interrupted("invalid_transition"),
+		);
+		await expect(
+			getHrRound(database, originalL2.id, now, domains),
+		).resolves.toMatchObject({
+			decision: "incomplete",
+			effectiveOutcome: "withdrawn",
+		});
+	});
+
+	async function runInCandidacyOrder<A, B>(
+		item: { driveId: string; id: string },
+		lockedStaff: string,
+		first: () => Promise<A>,
+		second: () => Promise<B>,
+	) {
+		const held = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const hold = database.transaction(async (tx) => {
+			await tx
+				.select({ id: user.id })
+				.from(user)
+				.where(eq(user.id, lockedStaff))
+				.for("update");
+			held.resolve();
+			await release.promise;
+		});
+		await held.promise;
+		const firstWrite = first();
+		void firstWrite.catch(() => {});
+		let secondWrite: Promise<B> | undefined;
+		try {
+			await expect
+				.poll(async () => {
+					try {
+						await database.transaction((tx) =>
+							tx.execute(
+								sql`select id from drive_candidate where id = ${item.id} for no key update nowait`,
+							),
+						);
+						return false;
+					} catch (error) {
+						return (
+							(error as { cause?: { code?: string } }).cause?.code === "55P03"
+						);
+					}
+				})
+				.toBe(true);
+			secondWrite = second();
+			void secondWrite.catch(() => {});
+			await waitForLockedQuery(
+				'%from "drive_candidate" where%for no key update',
+			);
+		} finally {
+			release.resolve();
+			await hold;
+		}
+		return Promise.allSettled([firstWrite, secondWrite] as const);
+	}
+
+	test.each([true, false])(
+		"serializes L2 booking and L1 reversal (booking first: %s)",
+		async (bookingFirst) => {
+			const scenario = await prepareReviewCase(
+				bookingFirst ? "2035-05-01" : "2035-05-02",
+			);
+			const reverse = () =>
+				correctAssessment(
+					database,
+					config,
+					staff.panelist,
+					scenario.l1.id,
+					correction(
+						scenario.l1Version.id,
+						scenario.l1Scorecard,
+						"do_not_proceed",
+					),
+				);
+			const [winner, follower] = bookingFirst
+				? await runInCandidacyOrder(
+						scenario.item,
+						staff.other,
+						scenario.bookL2,
+						reverse,
+					)
+				: await runInCandidacyOrder(
+						scenario.item,
+						staff.panelist,
+						reverse,
+						scenario.bookL2,
+					);
+			if (winner.status !== "fulfilled") throw winner.reason;
+			if (bookingFirst) {
+				expect(follower.status).toBe("fulfilled");
+				await expect(
+					getHrRound(database, winner.value.id, now, domains),
+				).resolves.toMatchObject({
+					state: "cancelled",
+					pendingReviewId: expect.any(String),
+				});
+			} else {
+				expect(follower).toMatchObject({
+					status: "rejected",
+					reason: interrupted("round_not_eligible"),
+				});
+				expect(
+					(await listFeedbackReviews(database, config, staff.hr, 1)).items.some(
+						(review) => review.candidate.id === scenario.item.id,
+					),
+				).toBe(false);
+			}
+		},
+	);
+
+	test.each([true, false])(
+		"serializes L2 submission and L1 reversal (submission first: %s)",
+		async (submissionFirst) => {
+			const scenario = await prepareReviewCase(
+				submissionFirst ? "2035-06-01" : "2035-06-02",
+			);
+			const l2 = await scenario.bookL2();
+			await database
+				.update(interviewRound)
+				.set({ state: "awaiting_feedback", revision: 1, closedAt: now })
+				.where(eq(interviewRound.id, l2.id));
+			const { criteria } = await getAssignedAssessment(
+				database,
+				config,
+				staff.other,
+				l2.id,
+			);
+			const content = completeDraft(
+				criteria?.skills.map(({ id }) => id) ?? [],
+				"selected",
+			);
+			await changeAssessment(database, config, staff.other, l2.id, {
+				action: "draft",
+				commandId: randomUUID(),
+				draftRevision: 0,
+				content,
+			});
+			const submit = () =>
+				changeAssessment(database, config, staff.other, l2.id, {
+					action: "submit",
+					commandId: randomUUID(),
+					attemptRevision: 1,
+					draftRevision: 1,
+					reviewedL1VersionId: scenario.l1Version.id,
+				});
+			const reverse = () =>
+				correctAssessment(
+					database,
+					config,
+					staff.panelist,
+					scenario.l1.id,
+					correction(
+						scenario.l1Version.id,
+						scenario.l1Scorecard,
+						"do_not_proceed",
+					),
+				);
+			const [winner, follower] = submissionFirst
+				? await runInCandidacyOrder(scenario.item, staff.other, submit, reverse)
+				: await runInCandidacyOrder(
+						scenario.item,
+						staff.panelist,
+						reverse,
+						submit,
+					);
+			if (winner.status !== "fulfilled") throw winner.reason;
+			const review = await latestReview(scenario.item.id);
+			if (submissionFirst) {
+				expect(follower.status).toBe("fulfilled");
+				expect(review.l2Version?.id).toBe(winner.value.id);
+			} else {
+				expect(follower).toMatchObject({
+					status: "rejected",
+					reason: interrupted("pending_feedback_review"),
+				});
+				expect(review.l2Version).toBeNull();
+			}
+			await expect(
+				getHrRound(database, l2.id, now, domains),
+			).resolves.toMatchObject({
+				state: submissionFirst ? "feedback_submitted" : "cancelled",
+				effectiveOutcome: null,
+				pendingReviewId: review.id,
+			});
+		},
+	);
+
+	test.each([true, false])(
+		"serializes L2 admission and cancellation (admission first: %s)",
+		async (admissionFirst) => {
+			const date = admissionFirst ? "2035-07-01" : "2035-07-02";
+			const scenario = await prepareReviewCase(date);
+			const l2 = await scenario.bookL2();
+			const today = { ...config, clock: () => new Date(`${date}T05:31:00Z`) };
+			const entry = await invite(l2.id, scenario.item.email);
+			const mailbox = captureMail();
+			const challenge = await requestCode(
+				database,
+				today,
+				mailbox.mail,
+				entry.id,
+				entry.input,
+			);
+			const admit = () =>
+				verifyCode(database, today, entry.id, {
+					...entry.input,
+					challengeId: challenge.challengeId,
+					code: mailbox.code(),
+				});
+			const reverse = () =>
+				correctAssessment(
+					database,
+					today,
+					staff.panelist,
+					scenario.l1.id,
+					correction(
+						scenario.l1Version.id,
+						scenario.l1Scorecard,
+						"do_not_proceed",
+					),
+				);
+			const held = Promise.withResolvers<void>();
+			const release = Promise.withResolvers<void>();
+			const hold = database.transaction(async (tx) => {
+				await tx
+					.select({ id: interviewRound.id })
+					.from(interviewRound)
+					.where(eq(interviewRound.id, l2.id))
+					.for("update");
+				held.resolve();
+				await release.promise;
+			});
+			await held.promise;
+			let admission: ReturnType<typeof admit> | undefined;
+			let reversal: ReturnType<typeof reverse> | undefined;
+			try {
+				if (admissionFirst) {
+					admission = admit();
+					void admission.catch(() => {});
+					await waitForLockedQuery(
+						'%from "interview_round" where "interview_round"."id" =%for update',
+					);
+					reversal = reverse();
+				} else {
+					reversal = reverse();
+					await waitForLockedQuery(
+						'%from "interview_round" where "interview_round"."id" in%for update',
+					);
+					admission = admit();
+				}
+				void admission.catch(() => {});
+				void reversal.catch(() => {});
+			} finally {
+				release.resolve();
+				await hold;
+			}
+			const [join, changed] = await Promise.allSettled([admission, reversal]);
+			expect(changed.status).toBe("fulfilled");
+			if (admissionFirst) {
+				if (join.status !== "fulfilled" || !join.value)
+					throw new Error("Admission was expected to commit first");
+				await expect(
+					candidateRound(database, today, l2.id, join.value.token, {
+						action: "presence",
+					}),
+				).rejects.toMatchObject(interrupted("unavailable"));
+			} else
+				expect(join).toMatchObject({
+					status: "rejected",
+					reason: interrupted("invite_unavailable"),
+				});
+		},
+	);
 });

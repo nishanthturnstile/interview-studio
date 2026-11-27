@@ -2,6 +2,8 @@ import type {
 	AssignedInterview,
 	InterviewConflict,
 	InterviewSchedule,
+	InterviewWorkspaceItem,
+	PanelistRoundGroup,
 } from "@studio/contracts";
 import { CalendarDays, CircleAlert, Clock3, MapPin, Video } from "lucide-react";
 import type { ReactNode } from "react";
@@ -17,16 +19,79 @@ import {
 	EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { interviewMessage } from "./api";
 
 export const stateNames = {
 	scheduled: "Scheduled",
 	active: "Active",
 	awaiting_feedback: "Awaiting feedback",
+	feedback_submitted: "Feedback submitted",
 	cancelled: "Cancelled",
 	no_show: "No-show",
 	withdrawn: "Withdrawn",
 };
+
+export const panelistGroupLabels = {
+	attention: "Needs your attention",
+	upcoming: "Upcoming",
+	submitted: "Recently submitted",
+} satisfies Record<PanelistRoundGroup, string>;
+
+export function panelistRoundAction(state: AssignedInterview["state"]) {
+	switch (state) {
+		case "active":
+			return { label: "Continue interview" };
+		case "awaiting_feedback":
+			return { label: "Open feedback", hash: "assessment" };
+		case "feedback_submitted":
+			return { label: "View scorecard", hash: "assessment" };
+		default:
+			return { label: "Open interview" };
+	}
+}
+
+export function workspaceActionLabels(item: InterviewWorkspaceItem) {
+	switch (item.action) {
+		case "schedule":
+			return {
+				status: item.level === "l2" ? "L1 passed" : "Ready for L1",
+				action: `Schedule ${item.level?.toUpperCase() ?? "interview"}`,
+			};
+		case "review_feedback":
+			return { status: "L1 pass reversed", action: "Resolve feedback review" };
+		case "replace_panelist":
+			return { status: "Panelist unavailable", action: "Resolve assignment" };
+		case "review_attendance":
+			return { status: "Interview time passed", action: "Review attendance" };
+		case "review_skills":
+			return {
+				status: `${item.level?.toUpperCase() ?? "Interview"} skills need review`,
+				action: "Review skills",
+			};
+		default:
+			return null;
+	}
+}
+
+export function MeetingLink({ url }: { url: string }) {
+	return (
+		<a
+			href={url}
+			target="_blank"
+			rel="noopener noreferrer"
+			className={cn(
+				buttonVariants({ variant: "outline" }),
+				"h-auto min-h-9 max-w-full self-start whitespace-normal py-2",
+			)}
+		>
+			<Video data-icon="inline-start" className="shrink-0" />
+			<span className="min-w-0 text-left whitespace-normal [overflow-wrap:anywhere]">
+				Open meeting at {new URL(url).hostname}
+			</span>
+		</a>
+	);
+}
 
 export function InterviewStatus({ state }: { state: keyof typeof stateNames }) {
 	return (
@@ -177,7 +242,6 @@ export function ScheduleCard({
 	title?: string;
 	children?: ReactNode;
 }) {
-	const meeting = round.meeting;
 	return (
 		<Card>
 			<CardHeader>
@@ -199,38 +263,36 @@ export function ScheduleCard({
 						</div>
 					</div>
 				</div>
-				{meeting.mode === "virtual" ? (
-					meeting.teamsUrl ? (
-						<a
-							href={meeting.teamsUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-							className={buttonVariants({
-								variant: "outline",
-								className: "self-start",
-							})}
-						>
-							<Video data-icon="inline-start" />
-							Open Teams meeting
-						</a>
-					) : (
-						<p className="flex items-center gap-3 text-sm text-muted-foreground">
-							<Video className="size-4" aria-hidden="true" />
-							Teams link pending
-						</p>
-					)
-				) : (
-					<p className="flex items-start gap-3 text-sm [overflow-wrap:anywhere]">
-						<MapPin
-							className="mt-0.5 size-4 shrink-0 text-muted-foreground"
-							aria-hidden="true"
-						/>
-						<span>{meeting.room}</span>
-					</p>
-				)}
+				<MeetingDetails meeting={round.meeting} />
 				{children}
 			</CardContent>
 		</Card>
+	);
+}
+
+export function MeetingDetails({
+	meeting,
+}: {
+	meeting: InterviewSchedule["meeting"];
+}) {
+	if (meeting.mode === "virtual") {
+		return meeting.teamsUrl ? (
+			<MeetingLink url={meeting.teamsUrl} />
+		) : (
+			<p className="flex items-center gap-2 text-sm text-muted-foreground">
+				<Video className="size-4 shrink-0" aria-hidden="true" />
+				Meeting link pending
+			</p>
+		);
+	}
+	return (
+		<p className="flex items-start gap-2 text-sm [overflow-wrap:anywhere]">
+			<MapPin
+				className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+				aria-hidden="true"
+			/>
+			<span>{meeting.room}</span>
+		</p>
 	);
 }
 

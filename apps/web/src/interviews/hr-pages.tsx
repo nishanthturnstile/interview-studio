@@ -1,11 +1,13 @@
 import {
 	canManageInterviews,
 	type EligibleInterviewCandidate,
-	type HrInterview,
-	interviewListQuerySchema,
+	type InterviewWorkspaceItem,
+	type InterviewWorkspaceQuery,
+	interviewWorkspaceQuerySchema,
+	roundSchema,
 } from "@studio/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useBlocker } from "@tanstack/react-router";
+import { getRouteApi, Link, useBlocker } from "@tanstack/react-router";
 import {
 	CalendarDays,
 	ChevronDown,
@@ -15,9 +17,10 @@ import {
 	Search,
 	SlidersHorizontal,
 } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Collapsible,
 	CollapsibleContent,
@@ -43,38 +46,63 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { accessDenied } from "./api";
 import {
 	experienceLabel,
+	formatClock,
+	formatDate,
 	InterviewAlert,
 	InterviewEmpty,
 	InterviewLoading,
 	InterviewStatus,
 	scheduleLabel,
+	workspaceActionLabels,
 } from "./display";
-import { BookingSheet, HrRoundDetail } from "./hr-actions";
-import { hrInterviewsQuery, invalidateHrInterviews } from "./hr-queries";
+import { FeedbackReviewInbox, FeedbackReviewSheet } from "./feedback-reviews";
+import {
+	BookingSheet,
+	HrRoundDetail,
+	WithdrawCandidacySheet,
+} from "./hr-actions";
+import {
+	feedbackReviewKey,
+	hrInterviewsQuery,
+	invalidateHrInterviews,
+} from "./hr-queries";
+import { CandidacyTimeline } from "./hr-timeline";
+import { decisionLabels } from "./scorecard";
 
 const staffRoute = getRouteApi("/staff");
 const route = getRouteApi("/staff/interviews");
 const tabs = [
-	{ id: "queue", label: "To schedule" },
+	{ id: "queue", label: "Action needed" },
 	{ id: "scheduled", label: "Scheduled" },
+	{ id: "awaiting", label: "Awaiting feedback" },
 	{ id: "history", label: "History" },
 ] as const;
 const emptyCopy = {
 	queue: [
-		"No candidates to schedule",
-		"Confirmed candidates appear here when they’re eligible for L1.",
+		"No HR actions needed",
+		"Scheduling and feedback issues that need your attention appear here.",
 	],
 	scheduled: [
 		"No scheduled interviews",
-		"New bookings appear here until the round closes.",
+		"Upcoming and live interviews appear here.",
+	],
+	awaiting: [
+		"No interviews awaiting feedback",
+		"Interviews appear here while the panelist completes their scorecard.",
 	],
 	history: [
-		"No past interviews",
-		"Rounds awaiting feedback and closed bookings appear here.",
+		"No closed candidacies",
+		"Final outcomes and their interview history appear here.",
 	],
 };
 
 type Range = { minYears?: string; maxYears?: string };
+
+const roundFilters = [
+	{ value: "all", label: "All rounds" },
+	{ value: "l1", label: "L1" },
+	{ value: "l2", label: "L2" },
+];
 
 function ExperienceFilter({
 	range,
@@ -102,7 +130,7 @@ function ExperienceFilter({
 
 	function apply(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		const result = interviewListQuerySchema.safeParse(draft);
+		const result = interviewWorkspaceQuerySchema.safeParse(draft);
 		if (!result.success) {
 			setError(true);
 			return;
@@ -130,7 +158,7 @@ function ExperienceFilter({
 				render={
 					<Button
 						variant={active ? "secondary" : "outline"}
-						className="group h-10 min-w-0 justify-start px-3"
+						className="group col-span-full h-10 min-w-0 justify-start px-3 md:col-span-1"
 					/>
 				}
 				aria-label={active ? `Experience, ${summary}` : "Experience"}
@@ -228,78 +256,206 @@ function QueueRow({
 	item,
 	disabled,
 	onOpen,
+	onL1,
+	onHistory,
 }: {
 	item: EligibleInterviewCandidate;
 	disabled: boolean;
 	onOpen: (item: EligibleInterviewCandidate, button: HTMLButtonElement) => void;
+	onL1: (id: string, button: HTMLButtonElement) => void;
+	onHistory?: (button: HTMLButtonElement) => void;
 }) {
+	const label = `Schedule ${item.level.toUpperCase()}`;
+	const l1RoundId = item.qualifyingL1RoundId;
 	return (
 		<li className={`grid ${rowLayout} py-3.5`}>
 			<div className="min-w-0 [overflow-wrap:anywhere]">
-				<p className="font-semibold">{item.name}</p>
+				{onHistory ? (
+					<button
+						type="button"
+						className="max-w-full text-left font-semibold underline-offset-4 hover:underline"
+						disabled={disabled}
+						aria-label={`View interview timeline for ${item.name}`}
+						onClick={(event) => onHistory(event.currentTarget)}
+					>
+						{item.name}
+					</button>
+				) : (
+					<p className="font-semibold">{item.name}</p>
+				)}
 				<p className="mt-0.5 text-sm text-muted-foreground">{item.email}</p>
 			</div>
 			<div className="col-start-1 row-start-2 min-w-0 text-sm [overflow-wrap:anywhere] sm:col-start-auto sm:row-start-auto">
-				<p>{item.drive.title}</p>
+				<p className="font-medium">
+					{item.level === "l2" ? "L1 passed" : "Ready for L1"} ·{" "}
+					{item.drive.title}
+				</p>
 				<p className="mt-0.5 text-muted-foreground">
 					{experienceLabel(item.years)}
 				</p>
+				{item.lastAttempt > 0 && (
+					<p className="text-muted-foreground">
+						Rebook · Attempt {item.lastAttempt + 1}
+					</p>
+				)}
 			</div>
-			<Button
-				variant="outline"
-				size="sm"
-				className="col-start-2 row-span-2 row-start-1 justify-self-end sm:col-start-auto sm:row-span-1 sm:row-start-auto"
-				disabled={disabled}
-				aria-label={`Schedule L1 for ${item.name}`}
-				onClick={(event) => onOpen(item, event.currentTarget)}
-			>
-				<CalendarDays data-icon="inline-start" />
-				Schedule L1
-			</Button>
+			<div className="col-start-2 row-span-2 row-start-1 flex flex-col items-end gap-1 sm:col-start-auto sm:row-span-1 sm:row-start-auto">
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={disabled}
+					aria-label={`${label} for ${item.name}`}
+					onClick={(event) => onOpen(item, event.currentTarget)}
+				>
+					<CalendarDays data-icon="inline-start" />
+					{label}
+				</Button>
+				{l1RoundId && (
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={disabled}
+						onClick={(event) => onL1(l1RoundId, event.currentTarget)}
+					>
+						View L1 scorecard
+					</Button>
+				)}
+			</div>
 		</li>
 	);
 }
 
-function BookingRow({
-	round,
+function WorkspaceRow({
+	item,
+	tab,
 	disabled,
-	onOpen,
+	onBooking,
+	onReview,
+	onHistory,
+	onWithdraw,
 }: {
-	round: HrInterview;
+	item: InterviewWorkspaceItem;
+	tab: InterviewWorkspaceQuery["tab"];
 	disabled: boolean;
-	onOpen: (id: string, button: HTMLButtonElement) => void;
+	onBooking: (id: string, button: HTMLButtonElement) => void;
+	onReview: (id: string, button: HTMLButtonElement) => void;
+	onHistory: (item: InterviewWorkspaceItem, button: HTMLButtonElement) => void;
+	onWithdraw: (
+		item: EligibleInterviewCandidate,
+		button: HTMLButtonElement,
+	) => void;
 }) {
+	const { round, l1RoundId, reviewId, outcome } = item;
+	const labels = workspaceActionLabels(item);
+	const primary =
+		tab === "history"
+			? "View interview history"
+			: (labels?.action ?? "View booking");
+	const buttonClass = "h-auto min-h-10 max-w-full whitespace-normal";
 	return (
 		<li className={`grid ${rowLayout} py-3.5`}>
 			<div className="min-w-0 [overflow-wrap:anywhere]">
-				<p className="font-semibold">{round.candidate.name}</p>
+				{tab !== "history" && item.hasAttempts ? (
+					<button
+						type="button"
+						className="max-w-full text-left font-semibold underline-offset-4 hover:underline"
+						disabled={disabled}
+						aria-label={`View interview timeline for ${item.name}`}
+						onClick={(event) => onHistory(item, event.currentTarget)}
+					>
+						{item.name}
+					</button>
+				) : (
+					<p className="font-semibold">{item.name}</p>
+				)}
 				<p className="mt-0.5 text-sm text-muted-foreground">
-					{round.drive.title} · {round.level.toUpperCase()}
-					{round.attempt > 1 && ` · Attempt ${round.attempt}`}
+					{item.drive.title}
+					{round &&
+						` · ${round.level.toUpperCase()} · Attempt ${round.attempt}`}
 				</p>
 			</div>
 			<div className="col-start-1 row-start-2 min-w-0 text-sm [overflow-wrap:anywhere] sm:col-start-auto sm:row-start-auto">
-				<p className="tabular-nums">
-					{scheduleLabel(round.start, round.end, round.timeZone)}
-				</p>
-				<p className="mt-0.5 text-muted-foreground">
-					{round.panelist.name}
-					{round.meeting.mode === "virtual" &&
-						!round.meeting.teamsUrl &&
-						" · Teams link pending"}
-				</p>
+				{labels && (
+					<p className="font-medium text-warning-foreground">{labels.status}</p>
+				)}
+				{round && (
+					<>
+						<p className="tabular-nums">
+							{tab === "awaiting" && round.closedAt
+								? `Ended ${formatDate(round.closedAt, round.timeZone)}, ${formatClock(round.closedAt, round.timeZone)} (${round.timeZone})`
+								: scheduleLabel(round.start, round.end, round.timeZone)}
+						</p>
+						<p className="mt-0.5 text-muted-foreground">
+							{round.panelist.name}
+							{tab === "scheduled" &&
+								round.meeting.mode === "virtual" &&
+								!round.meeting.teamsUrl &&
+								" · Meeting link pending"}
+						</p>
+					</>
+				)}
+				{tab === "history" && outcome && (
+					<Badge variant={outcome === "selected" ? "success" : "muted"}>
+						{outcome === "withdrawn" ? "Withdrawn" : decisionLabels[outcome]}
+					</Badge>
+				)}
 			</div>
 			<div className="col-start-2 row-span-2 row-start-1 flex flex-col items-end gap-1 sm:col-start-auto sm:row-span-1 sm:row-start-auto">
-				<InterviewStatus state={round.state} />
-				<Button
-					variant="ghost"
-					size="sm"
-					disabled={disabled}
-					aria-label={`View booking for ${round.candidate.name}`}
-					onClick={(event) => onOpen(round.id, event.currentTarget)}
-				>
-					View booking <ChevronRight data-icon="inline-end" />
-				</Button>
+				{round && tab !== "queue" && <InterviewStatus state={round.state} />}
+				{item.action === "review_skills" && !disabled ? (
+					<Link
+						to="/staff/drives/$driveId"
+						params={{ driveId: item.drive.id }}
+						hash="scorecard-skills"
+						className={buttonVariants({ variant: "outline", size: "sm" })}
+					>
+						Review skills
+					</Link>
+				) : (
+					<Button
+						variant={tab === "queue" ? "outline" : "ghost"}
+						size="sm"
+						className={buttonClass}
+						disabled={disabled}
+						aria-label={`${primary} for ${item.name}`}
+						onClick={(event) => {
+							if (tab === "history") onHistory(item, event.currentTarget);
+							else if (reviewId) onReview(reviewId, event.currentTarget);
+							else if (round) onBooking(round.id, event.currentTarget);
+						}}
+					>
+						{primary}{" "}
+						{tab !== "queue" && <ChevronRight data-icon="inline-end" />}
+					</Button>
+				)}
+				{tab !== "history" &&
+					l1RoundId &&
+					item.action !== "review_feedback" &&
+					round?.id !== l1RoundId && (
+						<Button
+							variant="ghost"
+							size="sm"
+							className={buttonClass}
+							disabled={disabled}
+							onClick={(event) => onBooking(l1RoundId, event.currentTarget)}
+						>
+							View L1 scorecard
+						</Button>
+					)}
+				{item.action === "review_skills" && item.eligible && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className={buttonClass}
+						disabled={disabled}
+						aria-label={`Withdraw candidacy for ${item.name}`}
+						onClick={(event) => {
+							if (item.eligible) onWithdraw(item.eligible, event.currentTarget);
+						}}
+					>
+						Withdraw candidacy
+					</Button>
+				)}
 			</div>
 		</li>
 	);
@@ -312,6 +468,7 @@ export function Interviews() {
 	const client = useQueryClient();
 	const allowed = canManageInterviews(viewer.role);
 	const tab = search.tab ?? "queue";
+	const reviewId = search.review;
 	const page = search.page ?? 1;
 	const urlSearch = search.search ?? "";
 	const [searchText, setSearchText] = useState(urlSearch);
@@ -321,11 +478,12 @@ export function Interviews() {
 	}, [urlSearch]);
 	useEffect(() => () => window.clearTimeout(searchTimer.current), []);
 	const range = { minYears: search.minYears, maxYears: search.maxYears };
-	const parsed = interviewListQuerySchema.safeParse({
+	const parsed = interviewWorkspaceQuerySchema.safeParse({
 		tab,
 		page,
 		search: urlSearch,
 		driveId: search.driveId,
+		level: search.level,
 		...range,
 	});
 	const request = useQuery({
@@ -334,6 +492,9 @@ export function Interviews() {
 		placeholderData: (previous) => previous,
 	});
 	const [candidate, setCandidate] = useState<EligibleInterviewCandidate>();
+	const [withdrawal, setWithdrawal] = useState<EligibleInterviewCandidate>();
+	const [timeline, setTimeline] = useState<InterviewWorkspaceItem>();
+	const [updatesPage, setUpdatesPage] = useState(1);
 	const [notice, setNotice] = useState("");
 	const [saving, setSaving] = useState(false);
 	useBlocker({
@@ -343,6 +504,8 @@ export function Interviews() {
 	const searchInput = useRef<HTMLInputElement>(null);
 	const opener = useRef<HTMLButtonElement>(null);
 	const denied = accessDenied(request.error);
+	const actionTab = useRef<HTMLButtonElement>(null);
+	const actionCountId = useId();
 
 	function setSearch(fields: Partial<typeof search>, replace = true) {
 		void navigate({
@@ -383,6 +546,7 @@ export function Interviews() {
 	const filtered = Boolean(
 		searchText ||
 			search.driveId ||
+			search.level ||
 			range.minYears !== undefined ||
 			range.maxYears !== undefined,
 	);
@@ -391,7 +555,10 @@ export function Interviews() {
 		: 1;
 	const changingFilters = request.isPlaceholderData || searchText !== urlSearch;
 	const empty = filtered
-		? ["No matches", "Try changing your search, drive, or experience range."]
+		? [
+				"No matches",
+				"Try changing your search, drive, round, or experience range.",
+			]
 		: emptyCopy[tab];
 
 	function openCandidate(
@@ -404,7 +571,31 @@ export function Interviews() {
 
 	function openBooking(booking: string, button: HTMLButtonElement) {
 		opener.current = button;
-		setSearch({ booking });
+		setSearch({ booking, version: undefined, review: undefined });
+	}
+	function openReview(review: string, button: HTMLButtonElement) {
+		opener.current = button;
+		setSearch({ review, booking: undefined, version: undefined });
+	}
+	function openTimeline(
+		item: InterviewWorkspaceItem,
+		button: HTMLButtonElement,
+	) {
+		opener.current = button;
+		setTimeline(item);
+	}
+	function openWithdrawal(
+		item: EligibleInterviewCandidate,
+		button: HTMLButtonElement,
+	) {
+		opener.current = button;
+		setWithdrawal(item);
+	}
+	function onWithdrawn() {
+		setCandidate(undefined);
+		setWithdrawal(undefined);
+		setNotice("Candidate withdrawn.");
+		void invalidateHrInterviews(client);
 	}
 
 	return (
@@ -414,7 +605,8 @@ export function Interviews() {
 					Interviews
 				</h1>
 				<p className="mt-1.5 text-sm text-muted-foreground">
-					Schedule L1 across drives and manage interview bookings.
+					See what needs your attention and follow each candidate through their
+					interviews.
 				</p>
 			</header>
 			<Tabs
@@ -424,32 +616,64 @@ export function Interviews() {
 					const target = tabs.find(({ id }) => id === next);
 					if (target && target.id !== tab) {
 						setNotice("");
-						applyFilters({ tab: target.id }, false);
+						applyFilters(
+							{
+								tab: target.id,
+								booking: undefined,
+								review: undefined,
+								version: undefined,
+							},
+							false,
+						);
 					}
 				}}
 			>
 				<div className="overflow-hidden rounded-lg border bg-card">
-					<div className="flex flex-wrap items-center justify-between gap-1 border-b px-3 sm:px-4">
-						<TabsList variant="line" className="h-12 max-w-full gap-3">
-							{tabs.map(({ id, label }) => (
-								<TabsTrigger
-									className="h-full after:bottom-[-3px]"
-									key={id}
-									value={id}
-								>
-									{label}
-								</TabsTrigger>
-							))}
-						</TabsList>
+					<div className="flex items-center gap-2 border-b px-3 sm:px-4">
+						<div className="min-w-0 flex-1">
+							<TabsList
+								variant="line"
+								className="grid h-auto! w-full grid-cols-2 gap-1 lg:flex lg:h-12! lg:w-max lg:justify-start lg:gap-3"
+							>
+								{tabs.map(({ id, label }) => (
+									<TabsTrigger
+										className="h-10 after:bottom-0 sm:h-full sm:after:bottom-[-3px]"
+										key={id}
+										value={id}
+										ref={id === "queue" ? actionTab : undefined}
+										aria-describedby={
+											id === "queue" && request.data && !denied
+												? actionCountId
+												: undefined
+										}
+									>
+										{label}
+										{id === "queue" && request.data && !denied && (
+											<Badge
+												id={actionCountId}
+												variant={request.data.actionTotal ? "warning" : "muted"}
+												aria-hidden="true"
+											>
+												{request.data.actionTotal}
+											</Badge>
+										)}
+									</TabsTrigger>
+								))}
+							</TabsList>
+						</div>
 						<Button
 							variant="ghost"
 							size="icon-sm"
+							className="shrink-0"
 							title="Refresh interviews"
 							aria-label="Refresh interviews"
 							disabled={
 								request.isFetching || changingFilters || !parsed.success
 							}
-							onClick={() => void request.refetch()}
+							onClick={() => {
+								void request.refetch();
+								void client.invalidateQueries({ queryKey: feedbackReviewKey });
+							}}
 						>
 							<RefreshCw
 								className={
@@ -458,8 +682,8 @@ export function Interviews() {
 							/>
 						</Button>
 					</div>
-					<FieldGroup className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-2.5 p-3 sm:grid-cols-[minmax(0,1.8fr)_minmax(9rem,1fr)_minmax(8.5rem,auto)] sm:p-4">
-						<Field className="col-span-full sm:col-span-1">
+					<FieldGroup className="grid grid-cols-2 items-start gap-2.5 p-3 md:grid-cols-[minmax(0,1.8fr)_minmax(9rem,1fr)_minmax(7rem,auto)_minmax(8.5rem,auto)] sm:p-4">
+						<Field className="col-span-full md:col-span-1">
 							<FieldLabel htmlFor="interview-search" className="sr-only">
 								Candidate
 							</FieldLabel>
@@ -517,6 +741,31 @@ export function Interviews() {
 								</SelectContent>
 							</Select>
 						</Field>
+						<Field className="min-w-0">
+							<FieldLabel htmlFor="interview-round" className="sr-only">
+								Round
+							</FieldLabel>
+							<Select
+								items={roundFilters}
+								value={search.level ?? "all"}
+								onValueChange={(value) =>
+									applyFilters({ level: roundSchema.safeParse(value).data })
+								}
+							>
+								<SelectTrigger id="interview-round" className="w-full">
+									<SelectValue placeholder="All rounds" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectGroup>
+										{roundFilters.map(({ value, label }) => (
+											<SelectItem value={value} key={value}>
+												{label}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+						</Field>
 						<ExperienceFilter
 							range={range}
 							onApply={(next) => applyFilters(next)}
@@ -546,7 +795,7 @@ export function Interviews() {
 										className="font-medium text-muted-foreground"
 									>
 										{data
-											? `${data.total} ${data.tab === "queue" ? (data.total === 1 ? "candidate" : "candidates") : data.total === 1 ? "booking" : "bookings"}`
+											? `${data.total} ${data.tab === "queue" || data.tab === "history" ? (data.total === 1 ? "candidate" : "candidates") : data.total === 1 ? "interview" : "interviews"}`
 											: " "}
 									</p>
 									{filtered && (
@@ -558,6 +807,7 @@ export function Interviews() {
 												applyFilters({
 													search: undefined,
 													driveId: undefined,
+													level: undefined,
 													minYears: undefined,
 													maxYears: undefined,
 												});
@@ -598,31 +848,41 @@ export function Interviews() {
 												<span>Candidate</span>
 												<span>
 													{tab === "queue"
-														? "Drive and experience"
-														: "Interview and panelist"}
+														? "Reason"
+														: tab === "history"
+															? "Final outcome"
+															: "Interview and panelist"}
 												</span>
-												<span className="text-right">
-													{tab === "queue" ? "" : "Status"}
-												</span>
+												<span className="text-right">Details</span>
 											</div>
 											<ul className="divide-y" data-testid="interview-list">
-												{data.tab === "queue"
-													? data.items.map((item) => (
-															<QueueRow
-																key={item.id}
-																item={item}
-																disabled={changingFilters}
-																onOpen={openCandidate}
-															/>
-														))
-													: data.items.map((round) => (
-															<BookingRow
-																key={round.id}
-																round={round}
-																disabled={changingFilters}
-																onOpen={openBooking}
-															/>
-														))}
+												{data.items.map((item) =>
+													item.action === "schedule" && item.eligible ? (
+														<QueueRow
+															key={item.id}
+															item={item.eligible}
+															disabled={changingFilters}
+															onOpen={openCandidate}
+															onL1={openBooking}
+															onHistory={
+																item.hasAttempts
+																	? (button) => openTimeline(item, button)
+																	: undefined
+															}
+														/>
+													) : (
+														<WorkspaceRow
+															key={item.id}
+															item={item}
+															tab={data.tab}
+															disabled={changingFilters}
+															onBooking={openBooking}
+															onReview={openReview}
+															onHistory={openTimeline}
+															onWithdraw={openWithdrawal}
+														/>
+													),
+												)}
 											</ul>
 										</div>
 									) : (
@@ -656,13 +916,26 @@ export function Interviews() {
 										</Button>
 									</nav>
 								)}
+								{id === "queue" && !denied && (
+									<FeedbackReviewInbox
+										updatesOnly
+										page={updatesPage}
+										onPage={setUpdatesPage}
+										onOpen={openReview}
+									/>
+								)}
 							</div>
 						)}
 					</TabsContent>
 				))}
 			</Tabs>
 			<Sheet
-				open={!denied && Boolean(candidate || search.booking)}
+				open={
+					!denied &&
+					Boolean(
+						candidate || withdrawal || timeline || search.booking || reviewId,
+					)
+				}
 				onOpenChange={(open, details) => {
 					if (open) return;
 					if (saving) {
@@ -670,27 +943,51 @@ export function Interviews() {
 						return;
 					}
 					setCandidate(undefined);
-					if (search.booking) setSearch({ booking: undefined });
+					setWithdrawal(undefined);
+					setTimeline(undefined);
+					if (search.booking || reviewId)
+						setSearch({
+							booking: undefined,
+							version: undefined,
+							review: undefined,
+						});
 				}}
 			>
 				<SheetContent
 					closeDisabled={saving}
 					className="gap-0 bg-card data-[side=right]:w-full data-[side=right]:sm:max-w-[34rem]"
 					finalFocus={() =>
-						opener.current?.isConnected ? opener.current : searchInput.current
+						opener.current?.isConnected
+							? opener.current
+							: tab === "queue"
+								? actionTab.current
+								: searchInput.current
 					}
 				>
-					{candidate ? (
+					{reviewId ? (
+						<FeedbackReviewSheet
+							key={reviewId}
+							id={reviewId}
+							busy={saving}
+							setBusy={setSaving}
+						/>
+					) : timeline ? (
+						<CandidacyTimeline key={timeline.id} item={timeline} />
+					) : withdrawal ? (
+						<WithdrawCandidacySheet
+							key={withdrawal.id}
+							candidate={withdrawal}
+							busy={saving}
+							setBusy={setSaving}
+							onWithdraw={onWithdrawn}
+						/>
+					) : candidate ? (
 						<BookingSheet
 							key={candidate.id}
 							candidate={candidate}
 							busy={saving}
 							setBusy={setSaving}
-							onWithdraw={() => {
-								setCandidate(undefined);
-								setNotice("Candidate withdrawn.");
-								void invalidateHrInterviews(client);
-							}}
+							onWithdraw={onWithdrawn}
 							onBook={(booking) => {
 								setCandidate(undefined);
 								setSearchText("");
@@ -702,6 +999,7 @@ export function Interviews() {
 										booking,
 										search: undefined,
 										driveId: undefined,
+										level: search.level,
 										page: undefined,
 										minYears: undefined,
 										maxYears: undefined,
@@ -715,6 +1013,7 @@ export function Interviews() {
 							<HrRoundDetail
 								key={search.booking}
 								id={search.booking}
+								versionId={search.version}
 								busy={saving}
 								setBusy={setSaving}
 							/>

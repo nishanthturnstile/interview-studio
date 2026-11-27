@@ -2,6 +2,9 @@ import {
 	type Health,
 	healthSchema,
 	interviewPageNumberSchema,
+	type PanelistRoundGroup,
+	panelistRoundGroupSchema,
+	roundSchema,
 } from "@studio/contracts";
 import {
 	createRootRoute,
@@ -248,14 +251,34 @@ const accountRoute = createRoute({
 		"StaffAccount",
 	),
 });
+type InterviewWorkspaceSearch = {
+	tab?: "queue" | "scheduled" | "awaiting" | "history";
+	search?: string;
+	driveId?: string;
+	level?: "l1" | "l2";
+	minYears?: string;
+	maxYears?: string;
+	page?: number;
+	booking?: string;
+	review?: string;
+	version?: string;
+};
 const interviewsRoute = createRoute({
 	getParentRoute: () => staffRoute,
 	path: "interviews",
-	validateSearch: (input: Record<string, unknown>) => ({
-		tab: z.enum(["queue", "scheduled", "history"]).safeParse(input.tab).data,
+	validateSearch: (
+		input: Record<string, unknown>,
+	): InterviewWorkspaceSearch => ({
+		tab:
+			input.tab === "reviews"
+				? "queue"
+				: z
+						.enum(["queue", "scheduled", "awaiting", "history"])
+						.safeParse(input.tab).data,
 		search:
 			typeof input.search === "string" ? input.search.slice(0, 120) : undefined,
 		driveId: z.uuid().safeParse(input.driveId).data,
+		level: roundSchema.safeParse(input.level).data,
 		minYears:
 			input.minYears === undefined
 				? undefined
@@ -266,6 +289,8 @@ const interviewsRoute = createRoute({
 				: String(input.maxYears).slice(0, 8),
 		page: interviewPageNumberSchema.safeParse(input.page).data,
 		booking: z.uuid().safeParse(input.booking).data,
+		review: z.uuid().safeParse(input.review).data,
+		version: z.uuid().safeParse(input.version).data,
 	}),
 	component: lazyRouteComponent(
 		() => import("./interviews/hr-pages.tsx"),
@@ -275,8 +300,11 @@ const interviewsRoute = createRoute({
 const myInterviewsRoute = createRoute({
 	getParentRoute: () => staffRoute,
 	path: "my-interviews",
-	validateSearch: (input: Record<string, unknown>): { page?: number } => ({
+	validateSearch: (
+		input: Record<string, unknown>,
+	): { page?: number; group?: PanelistRoundGroup } => ({
 		page: interviewPageNumberSchema.safeParse(input.page).data,
+		group: panelistRoundGroupSchema.safeParse(input.group).data,
 	}),
 	component: lazyRouteComponent(
 		() => import("./interviews/panelist-pages.tsx"),

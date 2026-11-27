@@ -46,6 +46,8 @@ const messages: Partial<Record<DriveError["error"], string>> = {
 	revision_conflict: "Someone saved a newer version while you were editing.",
 	interview_email_in_use:
 		"Cancel the upcoming interview or close the active round before changing this email.",
+	pending_feedback_review:
+		"Resolve the pending review in Interviews before changing this candidacy.",
 	duplicate_email:
 		"A confirmed candidate in this drive already uses this email.",
 	invalid_review:

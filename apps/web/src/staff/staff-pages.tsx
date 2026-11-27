@@ -1,9 +1,8 @@
 import { canManageInterviews } from "@studio/contracts";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { type ReactNode, useId } from "react";
 import { setDarkMode, useDarkMode } from "@/components/theme";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -21,6 +20,9 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { SchedulingPreferences } from "../interviews/preferences";
+import { DirectorDashboard } from "./director-dashboard";
+import { HrDashboard } from "./hr-dashboard";
+import { PanelistDashboard } from "./panelist-dashboard";
 import { roleName } from "./staff-display";
 
 const staffRoute = getRouteApi("/staff");
@@ -42,28 +44,9 @@ function StaffSection({
 
 export function StaffDashboard() {
 	const viewer = staffRoute.useLoaderData();
-	return (
-		<StaffSection title="Dashboard">
-			<Card className="max-w-2xl">
-				<CardHeader>
-					<CardTitle className="[overflow-wrap:anywhere]">
-						Welcome, {viewer.name}
-					</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-wrap items-center justify-between gap-4">
-					<Badge variant="secondary">{roleName[viewer.role]}</Badge>
-					{viewer.role === "director" && (
-						<Link
-							to="/staff/access"
-							className={buttonVariants({ variant: "outline" })}
-						>
-							Manage staff access
-						</Link>
-					)}
-				</CardContent>
-			</Card>
-		</StaffSection>
-	);
+	if (canManageInterviews(viewer.role)) return <HrDashboard />;
+	if (viewer.role === "director") return <DirectorDashboard />;
+	return <PanelistDashboard staffId={viewer.id} />;
 }
 
 export function StaffAccount() {

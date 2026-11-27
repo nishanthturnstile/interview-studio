@@ -1,8 +1,13 @@
 import { createHash } from "node:crypto";
-import type { BookInterview } from "@studio/contracts";
+import type { BookInterview, Round } from "@studio/contracts";
 import { hashPassword } from "better-auth/crypto";
-import { eq } from "drizzle-orm";
-import { drive, driveCandidate, driveDocument } from "../drives/schema.ts";
+import { and, eq } from "drizzle-orm";
+import {
+	drive,
+	driveCandidate,
+	driveDocument,
+	driveSkills,
+} from "../drives/schema.ts";
 import { account, user } from "../staff/auth-schema.ts";
 import { staffGrant } from "../staff/role-schema.ts";
 import { bookInterview } from "./scheduling.ts";
@@ -111,6 +116,34 @@ function uuidFor(id: string, purpose: string) {
 	return `${value.slice(0, 8)}-${value.slice(8, 12)}-4${value.slice(13, 16)}-8${value.slice(17, 20)}-${value.slice(20, 32)}`;
 }
 
+export async function fixtureReviewedSkills(
+	tx: Transaction,
+	driveId: string,
+	reviewerId: string,
+	round: Round = "l1",
+) {
+	await tx
+		.insert(driveSkills)
+		.values({
+			driveId,
+			round,
+			revision: 1,
+			reviewedAt: new Date(),
+			reviewedBy: reviewerId,
+			skills: [
+				{
+					id: uuidFor(driveId, `${round}-reasoning`),
+					name: round === "l1" ? "Technical reasoning" : "System design",
+				},
+				{
+					id: uuidFor(driveId, `${round}-communication`),
+					name: round === "l1" ? "Communication" : "Decision-making",
+				},
+			],
+		})
+		.onConflictDoNothing();
+}
+
 export async function seedInterviewFixture(
 	database: Database,
 	config: InterviewConfig,
@@ -158,6 +191,8 @@ export async function seedInterviewFixture(
 				.insert(drive)
 				.values({ ...item, createdBy: data.hr.id, clientKey: item.id })
 				.onConflictDoNothing({ target: drive.id });
+			await fixtureReviewedSkills(tx, item.id, data.hr.id);
+			await fixtureReviewedSkills(tx, item.id, data.hr.id, "l2");
 		}
 		await fixtureCandidacy(tx, data.hr.id, {
 			...data.candidate,
@@ -193,6 +228,15 @@ export async function seedInterviewFixture(
 		.from(driveCandidate)
 		.where(eq(driveCandidate.id, data.otherCandidate.id));
 	const settings = await readPreferences(database, data.hr.id);
+	const [skills] = await database
+		.select({ revision: driveSkills.revision })
+		.from(driveSkills)
+		.where(
+			and(
+				eq(driveSkills.driveId, data.otherDrive.id),
+				eq(driveSkills.round, "l1"),
+			),
+		);
 	const days = new Date(Date.now() + 24 * 60 * 60_000);
 	const localDate = new Intl.DateTimeFormat("sv-SE", {
 		timeZone: settings.timeZone,
@@ -203,6 +247,8 @@ export async function seedInterviewFixture(
 		driveId: data.otherDrive.id,
 		candidateId: data.otherCandidate.id,
 		candidateRevision: candidate.revision,
+		workflowRevision: 0,
+		skillRevision: skills.revision,
 		panelistId: data.panelist.id,
 		level: "l1",
 		slot: { date: localDate, time: "11:00", duration: settings.duration },

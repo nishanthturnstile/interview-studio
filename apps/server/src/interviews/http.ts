@@ -22,5 +22,5 @@ export async function readBody<T extends z.ZodType>(
 export function uuidParam(value: string) {
 	const id = z.uuid().safeParse(value);
 	if (!id.success) throw new InterviewProblem(404, "not_found");
-	return id.data;
+	return id.data.toLowerCase();
 }

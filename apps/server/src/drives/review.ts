@@ -8,7 +8,11 @@ import type {
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { z } from "zod";
 import { occupying } from "../interviews/queries.ts";
-import { interviewRound } from "../interviews/schema.ts";
+import {
+	interviewFeedbackReview,
+	interviewRound,
+} from "../interviews/schema.ts";
+import { openFeedbackReview } from "../interviews/workflow.ts";
 import { DriveProblem } from "./errors.ts";
 import { candidateView, type Database, skillSet } from "./queries.ts";
 import { driveCandidate, driveSkills } from "./schema.ts";
@@ -61,6 +65,17 @@ export async function changeCandidate(
 					current: candidateView(row),
 				});
 			}
+			const [pending] = await tx
+				.select({ id: interviewFeedbackReview.id })
+				.from(interviewFeedbackReview)
+				.where(
+					and(
+						openFeedbackReview,
+						eq(interviewFeedbackReview.driveId, driveId),
+						eq(interviewFeedbackReview.candidateId, id),
+					),
+				);
+			if (pending) throw new DriveProblem(409, "pending_feedback_review");
 			if (
 				row.reviewState === "duplicate" ||
 				(change.type !== "save" && row.reviewState !== "draft")

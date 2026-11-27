@@ -92,9 +92,9 @@ unset STUDIO_PORT STUDIO_MAILPIT_PORT STUDIO_AUTH_ORIGIN STUDIO_STAFF_DOMAINS ST
 
 Set `STUDIO_TEST_DATABASE_URL` to a fresh test PostgreSQL database to include
 the transactional role and interview tests in `pnpm test`. The role tests migrate
-and insert synthetic rows in that database. The interview tests use the same server
-with a temporary database to verify the Slice 3 upgrade, so the test role needs
-permission to create databases.
+and insert synthetic rows in that database. The interview tests use the same
+server with a temporary database to verify upgrades from earlier slices, so the
+test role needs permission to create databases.
 
 ## Local drive intake
 
@@ -137,11 +137,13 @@ its Teams invitation. Existing invitation secrets cannot be used with the new ke
 
 Use a fresh Compose project and a synthetic password. The seed creates two
 verified panelists with the same display name, an HR account, confirmed candidates
-in two drives, and an overlapping booking. Running the seed twice preserves
-the existing fixture records and round.
+in two drives, reviewed skills for both rounds, and an overlapping booking.
+Running the seed twice preserves the existing fixture records and round.
 
 ```sh
 export STUDIO_PORT=13004 STUDIO_MAILPIT_PORT=18024
+export STUDIO_AUTH_ORIGIN=http://127.0.0.1:13004 STUDIO_AUTH_ALLOW_LOOPBACK=true
+export STUDIO_STAFF_DOMAINS=studio.test STUDIO_DIRECTOR_EMAIL=director@studio.test
 export STUDIO_SEED_INTERVIEW_PASSWORD='A-local-synthetic-password'
 docker compose -p studio-interviews-test up -d --build --wait
 docker compose -p studio-interviews-test exec -e STUDIO_SEED_INTERVIEW_PASSWORD app node apps/server/src/seed.ts
@@ -155,9 +157,11 @@ pnpm test:browser --workers=1
 Open **Interviews** as `slice4-hr@studio.test`. The panelist accounts are
 `slice4-panelist@studio.test` and `slice4-other@studio.test`. Use the synthetic
 password for all three. The browser suite uploads and confirms a new resume,
-books its L1, copies the invitation, verifies a Mailpit code, and closes the
-round from the candidate browser. Set `STUDIO_TEST_INTERVIEW_SCREENSHOTS=1` to
-capture the booking sheet, waiting room, and staff views under `test-results`.
+books both rounds, and admits the candidate with separate Mailpit codes. It
+checks draft save and reload, L1 feedback submission, the L2 handoff and decision,
+and HR review after an L1 correction. Set `STUDIO_TEST_INTERVIEW_SCREENSHOTS=1`
+to capture the mobile draft and L2 handoff, desktop submitted scorecard, and
+both HR review layouts under `test-results`.
 
 For a shared-host rehearsal, use the configured HTTPS Studio origin and verify
 that both participants can open the full link, including the fragment, from

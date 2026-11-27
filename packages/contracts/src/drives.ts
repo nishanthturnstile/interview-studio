@@ -71,10 +71,12 @@ export const roundSchema = z.enum(["l1", "l2"]);
 export type Round = z.infer<typeof roundSchema>;
 export const revisionSchema = z.number().int().min(0).max(2_147_483_647);
 export const idempotencyKeySchema = z.uuid();
+export const maxDriveFieldNameLength = 120;
+export const maxRoundSkills = 50;
 const nameSchema = z
 	.string()
 	.trim()
-	.max(120)
+	.max(maxDriveFieldNameLength)
 	.refine((name) => !/\p{Cc}/u.test(name));
 export const driveCreateSchema = z
 	.object({
@@ -115,11 +117,11 @@ export const duplicateActionSchema = reviewActionSchema.extend({
 	targetRevision: revisionSchema,
 });
 const skillNameSchema = nameSchema.refine((name) => name.length > 0);
-const skillSchema = z.object({ id: z.uuid(), name: skillNameSchema });
+export const skillSchema = z.object({ id: z.uuid(), name: skillNameSchema });
 export const skillSaveSchema = reviewActionSchema.extend({
 	skills: z
 		.array(skillSchema.partial({ id: true }))
-		.max(50)
+		.max(maxRoundSkills)
 		.superRefine((skills, ctx) => {
 			const names = new Set<string>();
 			const ids = new Set<string>();
@@ -252,6 +254,7 @@ export const driveErrorSchema = z.object({
 		"revision_conflict",
 		"duplicate_email",
 		"interview_email_in_use",
+		"pending_feedback_review",
 		"invalid_review",
 		"original_missing",
 		"preview_unavailable",

@@ -8,14 +8,10 @@ import {
 import { and, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { drive } from "../drives/schema.ts";
 import { InterviewProblem } from "./problem.ts";
+import { getAssignedRound, getHrRound, occupying, years } from "./queries.ts";
 import {
-	getAssignedRound,
-	getHrRound,
-	occupying,
-	unresolved,
-	years,
-} from "./queries.ts";
-import {
+	interviewAssessment,
+	interviewAssessmentVersion,
 	interviewInvitation,
 	interviewRound,
 	interviewSession,
@@ -42,6 +38,14 @@ import {
 	type Transaction,
 } from "./store.ts";
 import { presenceFresh, requireEntryWindow, resolveSlot } from "./time.ts";
+import {
+	advanceWorkflow,
+	captureCriteria,
+	lockCriteria,
+	readEligibleCandidacy,
+	requireNoPendingReview,
+	requireWorkflowRevision,
+} from "./workflow.ts";
 
 type StaffRole = "hr" | "panelist";
 
@@ -119,37 +123,20 @@ async function checkConflicts(
 	}
 }
 
-function scheduledCandidates(round: { driveId: string; candidateId: string }) {
-	return and(
-		eq(interviewRound.driveId, round.driveId),
-		eq(interviewRound.candidateId, round.candidateId),
-	);
-}
-
-async function wasWithdrawn(
-	tx: Transaction,
-	round: { driveId: string; candidateId: string },
-) {
-	const [withdrawal] = await tx
-		.select({ id: interviewWithdrawal.candidateId })
-		.from(interviewWithdrawal)
-		.where(
-			and(
-				eq(interviewWithdrawal.driveId, round.driveId),
-				eq(interviewWithdrawal.candidateId, round.candidateId),
-			),
-		);
-	return Boolean(withdrawal);
-}
-
-async function requirePanelist(
+async function lockHr(
 	tx: Transaction,
 	config: InterviewConfig,
-	id: string,
+	hrId: string,
+	panelistId?: string,
 ) {
-	const staff = await lockStaff(tx, id, config.domains);
-	if (staff?.role !== "panelist")
-		throw new InterviewProblem(409, "panelist_ineligible");
+	let panelist: Awaited<ReturnType<typeof lockStaff>> = null;
+	for (const id of [...new Set([hrId, panelistId ?? hrId])].sort()) {
+		const staff = await lockStaff(tx, id, config.domains);
+		if (id === hrId && staff?.role !== "hr")
+			throw new InterviewProblem(403, "forbidden");
+		if (id === panelistId) panelist = staff;
+	}
+	return panelist;
 }
 
 function requireCandidacyRevision(
@@ -178,35 +165,31 @@ export function bookInterview(
 		const actor = { actor: "staff", actorId: staffId } as const;
 		const receipt = await commandReceipt(tx, config, actor, input, "book");
 		if (receipt.previous) {
+			await lockHr(tx, config, staffId);
 			if (!receipt.matches)
 				throw new InterviewProblem(409, "idempotency_conflict");
 			return { id: receipt.previous.resourceId };
 		}
 
 		const candidate = await lockCandidacy(tx, input.driveId, input.candidateId);
+		const skills = await lockCriteria(tx, input.driveId, input.level);
+		const panelist = await lockHr(tx, config, staffId, input.panelistId);
 		const email = candidateEmailSchema.safeParse(candidate.email);
 		const name = candidateFieldsSchema.shape.name.safeParse(candidate.name);
-		const [attempt] = await tx
-			.select({
-				last: sql<number>`coalesce(max(${interviewRound.attempt}), 0)`,
-				open: sql<boolean>`coalesce(bool_or(${interviewRound.state} in ('scheduled', 'active', 'awaiting_feedback')), false)`,
-			})
-			.from(interviewRound)
-			.where(and(scheduledCandidates(input), eq(interviewRound.level, "l1")));
-		if (
-			input.level !== "l1" ||
-			candidate.reviewState !== "confirmed" ||
-			!email.success ||
-			!name.success ||
-			!name.data ||
-			attempt.open ||
-			(await wasWithdrawn(tx, input))
-		) {
+		if (!email.success || !name.success || !name.data)
 			throw new InterviewProblem(409, "round_not_eligible");
-		}
+		const eligible = await readEligibleCandidacy(tx, input);
+		if (eligible.level !== input.level)
+			throw new InterviewProblem(409, "round_not_eligible");
 		requireCandidacyRevision(candidate, input.candidateRevision);
+		requireWorkflowRevision(input.workflowRevision, eligible.workflowRevision);
 
-		await requirePanelist(tx, config, input.panelistId);
+		const criteria = captureCriteria(skills, "booking", currentTime(config));
+		if (input.skillRevision !== skills.revision)
+			throw new InterviewProblem(409, "skills_changed", { criteria: skills });
+
+		if (panelist?.role !== "panelist")
+			throw new InterviewProblem(409, "panelist_ineligible");
 		await lockResources(tx, email.data, input.panelistId);
 		await lock(tx, `interview:preferences:${staffId}`);
 		const preferences = await readPreferences(tx, staffId);
@@ -235,11 +218,21 @@ export function bookInterview(
 				candidateName: name.data,
 				experienceTenths: candidate.experienceTenths,
 				level: input.level,
-				attempt: attempt.last + 1,
+				qualifyingL1RoundId: eligible.qualifyingL1RoundId,
+				qualifyingL1VersionId: eligible.qualifyingL1VersionId,
+				attempt: eligible.lastAttempt + 1,
 				meeting: input.meeting,
 				createdBy: staffId,
 			})
 			.returning({ id: interviewRound.id });
+		await tx
+			.insert(interviewAssessment)
+			.values({ roundId: round.id, criteria });
+		await advanceWorkflow(
+			tx,
+			input,
+			input.level === "l2" ? { currentL2RoundId: round.id } : undefined,
+		);
 		await createInvitation(tx, config, round.id);
 		await recordEvent(tx, actor, input, "book", 0, round.id);
 		await receipt.record(round.id);
@@ -266,7 +259,12 @@ export function withdrawCandidacy(
 	config: InterviewConfig,
 	staffId: string,
 	scope: { driveId: string; candidateId: string },
-	input: { commandId: string; revision: number; reason: string },
+	input: {
+		commandId: string;
+		revision: number;
+		workflowRevision: number;
+		reason: string;
+	},
 ) {
 	return database.transaction(async (tx) => {
 		const actor = { actor: "staff", actorId: staffId } as const;
@@ -278,30 +276,18 @@ export function withdrawCandidacy(
 			`withdraw:${scope.driveId}:${scope.candidateId}`,
 		);
 		if (receipt.previous) {
+			await lockHr(tx, config, staffId);
 			if (!receipt.matches)
 				throw new InterviewProblem(409, "idempotency_conflict");
 			return { id: receipt.previous.resourceId };
 		}
 		const candidate = await lockCandidacy(tx, scope.driveId, scope.candidateId);
+		await lockHr(tx, config, staffId);
 		requireCandidacyRevision(candidate, input.revision);
-		const [open] = await tx
-			.select({ id: interviewRound.id })
-			.from(interviewRound)
-			.where(
-				and(
-					scheduledCandidates(scope),
-					inArray(interviewRound.state, unresolved),
-				),
-			)
-			.limit(1);
-		if (
-			candidate.reviewState !== "confirmed" ||
-			open ||
-			(await wasWithdrawn(tx, scope))
-		) {
-			throw new InterviewProblem(409, "round_not_eligible");
-		}
+		const eligible = await readEligibleCandidacy(tx, scope);
+		requireWorkflowRevision(input.workflowRevision, eligible.workflowRevision);
 		await addWithdrawal(tx, scope, staffId, input.reason);
+		await advanceWorkflow(tx, scope, { currentL2RoundId: null });
 		await recordEvent(tx, actor, scope, "withdraw", candidate.revision);
 		await receipt.record(candidate.id);
 		return { id: candidate.id };
@@ -359,20 +345,31 @@ export function changeRound(
 				throw new InterviewProblem(404, "not_found");
 			if ((await lockStaff(tx, staffId, config.domains))?.role !== "panelist")
 				throw new InterviewProblem(403, "forbidden");
+		} else {
+			const reassign =
+				!receipt.previous &&
+				input.action === "reassign" &&
+				snapshot.state === "scheduled" &&
+				snapshot.revision === input.revision;
+			const recover =
+				!receipt.previous && input.action === "cancel_unavailable_panelist";
+			const panelist = await lockHr(
+				tx,
+				config,
+				staffId,
+				reassign ? input.panelistId : recover ? snapshot.panelistId : undefined,
+			);
+			if (reassign && panelist?.role !== "panelist")
+				throw new InterviewProblem(409, "panelist_ineligible");
+			if (recover && panelist?.role === "panelist")
+				throw new InterviewProblem(409, "invalid_transition");
 		}
 		if (receipt.previous) {
 			if (!receipt.matches)
 				throw new InterviewProblem(409, "idempotency_conflict");
 			return { id };
 		}
-		if (
-			role === "hr" &&
-			input.action === "reassign" &&
-			snapshot.state === "scheduled" &&
-			snapshot.revision === input.revision
-		) {
-			await requirePanelist(tx, config, input.panelistId);
-		}
+		await requireNoPendingReview(tx, snapshot);
 		await lockResources(
 			tx,
 			snapshot.invitedEmail,
@@ -388,7 +385,7 @@ export function changeRound(
 		if (round.revision !== input.revision) {
 			const current =
 				role === "hr"
-					? await getHrRound(tx, id, now)
+					? await getHrRound(tx, id, now, config.domains)
 					: await getAssignedRound(tx, id, staffId, now);
 			throw new InterviewProblem(409, "revision_conflict", { round: current });
 		}
@@ -422,11 +419,30 @@ export function changeRound(
 			} else {
 				if (
 					role !== "hr" ||
+					(input.action === "cancel_unavailable_panelist" &&
+						round.state !== "awaiting_feedback") ||
 					(round.state !== "scheduled" &&
-						!(input.action === "withdraw" && round.state === "active"))
+						!(input.action === "withdraw" && round.state === "active") &&
+						!(
+							input.action === "cancel_unavailable_panelist" &&
+							round.state === "awaiting_feedback"
+						))
 				)
 					throw invalid();
 				await applyHrChange(tx, config, staffId, input, round, next, now);
+				if (
+					input.action === "cancel" ||
+					input.action === "no_show" ||
+					input.action === "withdraw" ||
+					input.action === "cancel_unavailable_panelist"
+				)
+					await advanceWorkflow(
+						tx,
+						round,
+						input.action === "withdraw"
+							? { currentL2RoundId: null }
+							: undefined,
+					);
 			}
 			await tx
 				.update(interviewRound)
@@ -484,6 +500,20 @@ async function applyHrChange(
 			await revokeAdmission(tx, id, now);
 			await createInvitation(tx, config, id);
 			break;
+		case "cancel_unavailable_panelist": {
+			const [submitted] = await tx
+				.select({ id: interviewAssessmentVersion.id })
+				.from(interviewAssessmentVersion)
+				.where(eq(interviewAssessmentVersion.roundId, id))
+				.limit(1);
+			if (submitted) throw new InterviewProblem(409, "invalid_transition");
+			next.reason = input.reason;
+			next.cancelledAt = now;
+			next.cancellationCode = "panelist_unavailable";
+			next.state = "cancelled";
+			await revokeAdmission(tx, id, now);
+			break;
+		}
 		case "no_show":
 			if (now < round.end)
 				throw new InterviewProblem(409, "invalid_transition");
@@ -558,8 +588,8 @@ export async function copyInvitation(
 		`End: ${format.format(round.end)} (${round.timeZone})`,
 		`Studio: ${link.href}`,
 		meeting
-			? `${round.meeting.mode === "virtual" ? "Teams" : "Room"}: ${meeting}`
-			: "Teams link pending",
+			? `${round.meeting.mode === "virtual" ? "Meeting" : "Room"}: ${meeting}`
+			: "Meeting link pending",
 	].join("\n");
 	return { link: link.href, text };
 }

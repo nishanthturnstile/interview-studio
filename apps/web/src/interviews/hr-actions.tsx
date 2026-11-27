@@ -1,4 +1,5 @@
 import {
+	type BookInterview,
 	type EligibleInterviewCandidate,
 	type HrInterview,
 	hrInterviewSchema,
@@ -12,8 +13,10 @@ import {
 	interviewResultSchema,
 	meetingSchema,
 	noShowPartySchema,
+	withdrawCandidacySchema,
 } from "@studio/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
 	CalendarDays,
 	ChevronDown,
@@ -21,7 +24,6 @@ import {
 	Link2,
 	MapPin,
 	RefreshCw,
-	Video,
 } from "lucide-react";
 import {
 	type FormEvent,
@@ -32,6 +34,7 @@ import {
 	useState,
 } from "react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -57,6 +60,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
 	accessDenied,
 	InterviewRequestError,
@@ -64,6 +68,7 @@ import {
 	useCommandKey,
 	useInterviewResource,
 } from "./api";
+import { HrScorecard } from "./assessment";
 import {
 	AttendanceSummary,
 	ConflictWarning,
@@ -72,6 +77,7 @@ import {
 	InterviewLoading,
 	InterviewStatus,
 	localSlot,
+	MeetingLink,
 	ScheduleCard,
 	scheduleLabel,
 } from "./display";
@@ -83,7 +89,11 @@ import {
 	useSlotPreview,
 } from "./forms";
 
-import { hrBookingQuery, invalidateHrInterviews } from "./hr-queries";
+import {
+	bookingEligibilityQuery,
+	hrBookingQuery,
+	invalidateHrInterviews,
+} from "./hr-queries";
 
 const preferencePath = "/staff/settings/interviews";
 
@@ -92,7 +102,7 @@ type SheetWriteState = {
 	setBusy: (busy: boolean) => void;
 };
 
-function InterviewSheetForm({
+export function InterviewSheetForm({
 	title,
 	description,
 	status,
@@ -176,7 +186,7 @@ export function BookingSheet({
 		);
 	return (
 		<InterviewSheetForm
-			title="Schedule L1"
+			title={`Schedule ${candidate.level.toUpperCase()}`}
 			description={candidate.name}
 			footer={null}
 		>
@@ -189,6 +199,109 @@ export function BookingSheet({
 				</>
 			) : (
 				<InterviewLoading />
+			)}
+		</InterviewSheetForm>
+	);
+}
+
+export function WithdrawCandidacySheet({
+	candidate,
+	onWithdraw,
+	onBack,
+	busy,
+	setBusy,
+}: {
+	candidate: EligibleInterviewCandidate;
+	onWithdraw: () => void;
+	onBack?: () => void;
+} & SheetWriteState) {
+	const query = bookingEligibilityQuery(candidate.drive.id, candidate.id);
+	const eligibility = useQuery(query);
+	const denied = accessDenied(eligibility.error);
+	const current = !eligibility.error ? eligibility.data : undefined;
+	const [reason, setReason] = useState("");
+	const [retry, setRetry] =
+		useState<ReturnType<typeof withdrawCandidacySchema.parse>>();
+	const [error, setError] = useState<unknown>();
+	const withKey = useCommandKey();
+	async function submit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (busy || denied || (!current && !retry)) return;
+		const input =
+			retry ??
+			(current &&
+				withKey({
+					revision: current.revision,
+					workflowRevision: current.workflowRevision,
+					reason: reason.trim(),
+				}));
+		const parsed = withdrawCandidacySchema.safeParse(input);
+		if (!parsed.success) return;
+		setError(undefined);
+		setBusy(true);
+		try {
+			await interviewRequest(
+				`/staff/interviews/candidacies/${candidate.drive.id}/${candidate.id}/withdraw`,
+				interviewResultSchema,
+				{ data: parsed.data },
+			);
+			onWithdraw();
+		} catch (problem) {
+			setError(problem);
+			if (problem instanceof InterviewRequestError && problem.status < 500) {
+				setRetry(undefined);
+				void eligibility.refetch();
+			} else {
+				setRetry(parsed.data);
+			}
+		} finally {
+			setBusy(false);
+		}
+	}
+	return (
+		<InterviewSheetForm
+			title="Withdraw candidacy"
+			description={current?.name ?? candidate.name}
+			onSubmit={submit}
+			footer={
+				<>
+					{onBack && (
+						<Button
+							type="button"
+							variant="outline"
+							disabled={busy}
+							onClick={onBack}
+						>
+							Back to booking
+						</Button>
+					)}
+					<Button
+						type="submit"
+						variant="destructive"
+						disabled={
+							busy || denied || (!retry && (!current || !reason.trim()))
+						}
+					>
+						{busy
+							? "Withdrawing…"
+							: retry
+								? "Retry withdrawal"
+								: "Withdraw candidate"}
+					</Button>
+				</>
+			}
+		>
+			<p className="text-sm text-muted-foreground">{candidate.drive.title}</p>
+			<fieldset disabled={busy || Boolean(retry) || !current}>
+				<ReasonField value={reason} onChange={setReason} />
+			</fieldset>
+			{eligibility.isPending && <InterviewLoading />}
+			{(denied
+				? eligibility.error
+				: (error ?? (!retry && eligibility.error))) && (
+				<InterviewAlert
+					error={denied ? eligibility.error : (error ?? eligibility.error)}
+				/>
 			)}
 		</InterviewSheetForm>
 	);
@@ -229,6 +342,8 @@ function BookingForm({
 	onWithdraw: () => void;
 } & SheetWriteState) {
 	const client = useQueryClient();
+	const criteriaHeadingId = useId();
+	const isL2 = candidate.level === "l2";
 	const [settings, setSettings] = useState(preferences);
 	const [slot, setSlot] = useState<SlotFieldsValue>({
 		date: "",
@@ -241,56 +356,104 @@ function BookingForm({
 	});
 	const [panelist, setPanelist] = useState<InterviewPanelist | null>(null);
 	const [withdrawing, setWithdrawing] = useState(false);
-	const [reason, setReason] = useState("");
 	const [candidacy, setCandidacy] =
 		useState<InterviewCandidacySnapshot>(candidate);
+	const [workflowRevision, setWorkflowRevision] = useState(
+		candidate.workflowRevision,
+	);
+	const [acceptedCriteria, setAcceptedCriteria] = useState(candidate.criteria);
+	const [updatedCriteria, setUpdatedCriteria] = useState(candidate.criteria);
+	const [retryBooking, setRetryBooking] = useState<BookInterview>();
 	const { error, conflict, report, clear } = useMutationFeedback();
 	const withKey = useCommandKey();
 	const problem =
 		error instanceof InterviewRequestError ? error.problem : undefined;
 	const scope = { driveId: candidate.drive.id, candidateId: candidate.id };
+	const eligibility = useQuery(
+		bookingEligibilityQuery(scope.driveId, scope.candidateId),
+	);
+	const denied = accessDenied(eligibility.error);
+	const ineligible =
+		eligibility.error instanceof InterviewRequestError &&
+		eligibility.error.status === 409;
+	const current =
+		!denied && !ineligible && eligibility.data?.level === candidate.level
+			? eligibility.data
+			: undefined;
+	const eligibilityError =
+		eligibility.error ??
+		new InterviewRequestError(409, { error: "round_not_eligible" });
+	const criteria = retryBooking
+		? acceptedCriteria
+		: [current?.criteria ?? candidate.criteria, updatedCriteria].reduce(
+				(latest, next) => (next.revision > latest.revision ? next : latest),
+				acceptedCriteria,
+			);
+	const reviewed = criteria.reviewedAt !== null && criteria.skills.length > 0;
+	const criteriaChanged = criteria.revision !== acceptedCriteria.revision;
 	const preview = useSlotPreview(withdrawing ? null : slot, settings.timeZone);
 	async function submit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		if (busy) return;
-		const validMeeting = meetingSchema.safeParse(meeting);
-		if (
-			!withdrawing &&
-			(!preview.slot || !preview.data || !panelist || !validMeeting.success)
-		) {
-			report(new InterviewRequestError(400, { error: "invalid_input" }));
-			return;
+		if (busy || denied || (!current && !retryBooking)) return;
+		let attempted = retryBooking;
+		if (!attempted) {
+			if (!reviewed || criteriaChanged) return;
+			const validMeeting = meetingSchema.safeParse(meeting);
+			if (
+				!preview.slot ||
+				!preview.data ||
+				!panelist ||
+				!validMeeting.success
+			) {
+				report(new InterviewRequestError(400, { error: "invalid_input" }));
+				return;
+			}
+			attempted = withKey({
+				...scope,
+				candidateRevision: candidacy.revision,
+				workflowRevision,
+				skillRevision: acceptedCriteria.revision,
+				level: candidate.level,
+				panelistId: panelist.id,
+				preferenceRevision: settings.revision,
+				slot: preview.slot,
+				meeting: validMeeting.data,
+				acknowledge: conflict?.acknowledge,
+			});
 		}
 		setBusy(true);
 		try {
-			if (withdrawing) {
-				await interviewRequest(
-					`/staff/interviews/candidacies/${scope.driveId}/${scope.candidateId}/withdraw`,
-					interviewResultSchema,
-					{ data: withKey({ reason, revision: candidacy.revision }) },
-				);
-				onWithdraw();
-				return;
-			}
 			const { id } = await interviewRequest(
 				"/staff/interviews",
 				interviewResultSchema,
-				{
-					data: withKey({
-						...scope,
-						candidateRevision: candidacy.revision,
-						level: "l1",
-						panelistId: panelist?.id,
-						preferenceRevision: settings.revision,
-						slot: preview.slot,
-						meeting: validMeeting.data,
-						acknowledge: conflict?.acknowledge,
-					}),
-				},
+				{ data: attempted },
 			);
 			onBook(id);
 		} catch (error) {
 			report(error);
+			if (
+				error instanceof InterviewRequestError &&
+				["pending_feedback_review", "round_not_eligible"].includes(
+					error.message,
+				)
+			)
+				void eligibility.refetch();
+			setRetryBooking(
+				error instanceof InterviewRequestError && error.status < 500
+					? undefined
+					: attempted,
+			);
+			if (error instanceof InterviewRequestError && error.problem?.criteria) {
+				setUpdatedCriteria(error.problem.criteria);
+				void invalidateHrInterviews(client);
+			}
+			if (
+				error instanceof InterviewRequestError &&
+				error.problem?.workflowRevision !== undefined
+			) {
+				setWorkflowRevision(error.problem.workflowRevision);
+				void invalidateHrInterviews(client);
+			}
 			if (error instanceof InterviewRequestError && error.problem?.candidacy) {
 				setCandidacy(error.problem.candidacy);
 				void invalidateHrInterviews(client);
@@ -311,56 +474,63 @@ function BookingForm({
 			setBusy(false);
 		}
 	}
+	if (withdrawing) {
+		return (
+			<WithdrawCandidacySheet
+				candidate={candidate}
+				onWithdraw={onWithdraw}
+				onBack={() => setWithdrawing(false)}
+				busy={busy}
+				setBusy={setBusy}
+			/>
+		);
+	}
 	return (
 		<InterviewSheetForm
-			title={withdrawing ? "Withdraw candidacy" : "Schedule L1"}
+			title={`Schedule ${candidate.level.toUpperCase()}`}
 			description={
 				<span className="font-medium text-foreground">{candidacy.name}</span>
 			}
 			onSubmit={submit}
 			conflicts={conflict?.conflicts}
 			footer={
-				withdrawing ? (
-					<>
-						<Button
-							type="button"
-							variant="outline"
-							onClick={() => {
-								setWithdrawing(false);
-								clear();
-							}}
-							disabled={busy}
-						>
-							Back to booking
-						</Button>
-						<Button type="submit" variant="destructive" disabled={busy}>
-							{busy ? "Withdrawing…" : "Withdraw candidate"}
-						</Button>
-					</>
-				) : (
-					<div className="flex w-full flex-wrap items-center justify-between gap-2">
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="text-muted-foreground"
-							onClick={() => {
-								setWithdrawing(true);
-								clear();
-							}}
-							disabled={busy}
-						>
-							Withdraw candidacy
-						</Button>
-						<Button type="submit" disabled={busy || !panelist || !preview.data}>
-							{busy
-								? "Booking…"
+				<div className="flex w-full flex-wrap items-center justify-between gap-2">
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground"
+						onClick={() => {
+							if (retryBooking) setRetryBooking(undefined);
+							else setWithdrawing(true);
+							clear();
+						}}
+						disabled={busy || (!current && !retryBooking)}
+					>
+						{retryBooking ? "Edit booking" : "Withdraw candidacy"}
+					</Button>
+					<Button
+						type="submit"
+						disabled={
+							busy ||
+							denied ||
+							(!retryBooking &&
+								(!current ||
+									!panelist ||
+									!preview.data ||
+									!reviewed ||
+									criteriaChanged))
+						}
+					>
+						{busy
+							? "Booking…"
+							: retryBooking
+								? "Retry booking"
 								: conflict?.acknowledge
 									? "Book anyway"
 									: "Book interview"}
-						</Button>
-					</div>
-				)
+					</Button>
+				</div>
 			}
 		>
 			<dl className="grid gap-1.5 rounded-md border bg-muted/40 px-3.5 py-3 text-sm [overflow-wrap:anywhere]">
@@ -377,40 +547,128 @@ function BookingForm({
 					</dd>
 				</div>
 			</dl>
-			<fieldset disabled={busy}>
-				{withdrawing ? (
-					<ReasonField value={reason} onChange={setReason} />
+			{!retryBooking &&
+				!current &&
+				(eligibility.isPending ? (
+					<p role="status">Checking booking eligibility…</p>
 				) : (
-					<FieldGroup>
-						<PanelistPicker
-							value={panelist}
-							onChange={(value) => {
-								setPanelist(value);
-								clear();
-							}}
-						/>
-						<SlotFields
-							value={slot}
-							timeZone={settings.timeZone}
-							preview={preview}
-							onChange={(value) => {
-								setSlot(value);
-								clear();
-							}}
-						/>
-						<MeetingFields
-							value={meeting}
-							onChange={(value) => {
-								setMeeting(value);
-								clear();
-							}}
-						/>
-					</FieldGroup>
-				)}
-			</fieldset>
-			{error !== undefined && !problem?.conflicts && (
-				<InterviewAlert error={error} />
+					<InterviewAlert error={eligibilityError} />
+				))}
+			{current?.qualifyingL1RoundId && (
+				<HrScorecard roundId={current.qualifyingL1RoundId} bookingPreview />
 			)}
+			<section
+				aria-labelledby={criteriaHeadingId}
+				className={cn(
+					"flex min-w-0 flex-col items-start gap-2 text-sm",
+					isL2 && "border-y py-3.5",
+				)}
+			>
+				<div className="flex w-full flex-wrap items-center justify-between gap-2">
+					<h3
+						id={criteriaHeadingId}
+						className={cn("font-semibold", isL2 && "text-base")}
+					>
+						{isL2 ? "L2 scorecard criteria" : "Scorecard criteria"}
+					</h3>
+					{isL2 && reviewed && <Badge variant="muted">Reviewed</Badge>}
+				</div>
+				{reviewed ? (
+					<>
+						{isL2 && (
+							<p className="text-muted-foreground">
+								These skills are saved with the L2 booking.
+							</p>
+						)}
+						<ol
+							role={isL2 ? "list" : undefined}
+							className={cn(
+								"min-w-0 [overflow-wrap:anywhere]",
+								isL2
+									? "flex max-w-full flex-wrap gap-1.5"
+									: "list-decimal space-y-1 pl-5",
+							)}
+						>
+							{criteria.skills.map((skill) => (
+								<li
+									key={skill.id}
+									className={
+										isL2
+											? "max-w-full rounded-md border bg-muted/60 px-2.5 py-1 font-medium"
+											: undefined
+									}
+								>
+									{skill.name}
+								</li>
+							))}
+						</ol>
+						{criteriaChanged && (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onClick={() => {
+									setAcceptedCriteria(criteria);
+									clear();
+								}}
+							>
+								Use current criteria
+							</Button>
+						)}
+					</>
+				) : (
+					<>
+						<p role="status" className="text-muted-foreground">
+							Review the drive’s skills before booking this round.
+						</p>
+						<Link
+							to="/staff/drives/$driveId"
+							params={{ driveId: candidate.drive.id }}
+							hash="scorecard-skills"
+							target="_blank"
+							rel="noopener"
+							className={buttonVariants({ variant: "outline", size: "sm" })}
+						>
+							Open drive skills
+						</Link>
+					</>
+				)}
+			</section>
+			<fieldset disabled={busy || Boolean(retryBooking)}>
+				<FieldGroup>
+					<PanelistPicker
+						value={panelist}
+						onChange={(value) => {
+							setPanelist(value);
+							clear();
+						}}
+					/>
+					<SlotFields
+						value={slot}
+						timeZone={settings.timeZone}
+						preview={preview}
+						onChange={(value) => {
+							setSlot(value);
+							clear();
+						}}
+					/>
+					<MeetingFields
+						value={meeting}
+						onChange={(value) => {
+							setMeeting(value);
+							clear();
+						}}
+					/>
+				</FieldGroup>
+			</fieldset>
+			{error !== undefined &&
+				!problem?.conflicts &&
+				(current ||
+					retryBooking ||
+					eligibilityError.message !== problem?.error) && (
+					<InterviewAlert error={error} />
+				)}
 			{problem?.preferences && (
 				<p className="text-sm text-muted-foreground">
 					Your current default is {settings.duration} minutes. Review the
@@ -427,6 +685,7 @@ const hrActions = {
 	reassign: "Reassign panelist",
 	replace_link: "Replace Studio link",
 	cancel: "Cancel booking",
+	cancel_unavailable_panelist: "Cancel for unavailable panelist",
 	no_show: "Mark no-show",
 	withdraw: "Withdraw candidacy",
 	end: "Close round",
@@ -441,6 +700,8 @@ const confirmations: Partial<Record<HrAction, string>> = {
 		"Saving a new slot also replaces the Studio link. Update the Teams invitation after saving.",
 	cancel:
 		"This cancels the booking and ends access through its link. The candidate can be scheduled again.",
+	cancel_unavailable_panelist:
+		"This keeps the attempt in History and lets you book the candidate again at the same level.",
 	no_show:
 		"This records the absence and closes the booking. The candidate can be scheduled again.",
 	withdraw:
@@ -472,7 +733,10 @@ function ReasonField({
 }
 
 function availableActions(round: HrInterview): HrAction[] {
+	if (round.pendingReviewId) return [];
 	if (round.state === "active") return ["end", "withdraw"];
+	if (round.canCancelUnavailablePanelist)
+		return ["cancel_unavailable_panelist"];
 	if (round.state !== "scheduled") return [];
 	return [
 		"meeting",
@@ -520,16 +784,23 @@ function ManageForm({
 	const withKey = useCommandKey();
 	const problem =
 		error instanceof InterviewRequestError ? error.problem : undefined;
-	const reviewRequired = latest !== undefined && latest.revision !== revision;
-	const actionUnavailable =
-		latest !== undefined && !availableActions(latest).includes(action);
-	const destructive = ["cancel", "withdraw", "end", "no_show"].includes(action);
+	const current = latest && latest.revision > round.revision ? latest : round;
+	const reviewRequired = current.revision !== revision;
+	const actionUnavailable = !availableActions(current).includes(action);
+	const destructive = [
+		"cancel",
+		"cancel_unavailable_panelist",
+		"withdraw",
+		"end",
+		"no_show",
+	].includes(action);
 	const submitLabels: Record<HrAction, string> = {
 		meeting: "Save meeting details",
 		reschedule: "Save new time",
 		reassign: "Save panelist",
 		replace_link: hrActions.replace_link,
 		cancel: hrActions.cancel,
+		cancel_unavailable_panelist: hrActions.cancel_unavailable_panelist,
 		no_show: hrActions.no_show,
 		withdraw: "Withdraw candidate",
 		end: hrActions.end,
@@ -547,6 +818,7 @@ function ManageForm({
 					? { panelistId: panelist.id, acknowledge: conflict?.acknowledge }
 					: null;
 			case "withdraw":
+			case "cancel_unavailable_panelist":
 				return { reason };
 			case "no_show":
 				return { reason, absent };
@@ -572,18 +844,16 @@ function ManageForm({
 			onSaved(action);
 		} catch (error) {
 			report(error);
-			if (error instanceof InterviewRequestError && error.problem?.round) {
-				const current = hrInterviewSchema.safeParse(error.problem.round);
-				if (current.success) {
-					setLatest(current.data);
+			if (error instanceof InterviewRequestError) {
+				const current = hrInterviewSchema.safeParse(error.problem?.round);
+				if (current.success) setLatest(current.data);
+				if (
+					current.success ||
+					error.problem?.error === "pending_feedback_review"
+				)
 					onStale();
-				}
+				if (error.problem?.error === "panelist_ineligible") setPanelist(null);
 			}
-			if (
-				error instanceof InterviewRequestError &&
-				error.problem?.error === "panelist_ineligible"
-			)
-				setPanelist(null);
 		} finally {
 			setBusy(false);
 		}
@@ -625,22 +895,27 @@ function ManageForm({
 				</>
 			}
 		>
-			{latest && (
+			{(latest || reviewRequired || actionUnavailable) && (
 				<section aria-label="Current booking" className="flex flex-col gap-3">
 					<div className="flex items-center justify-between gap-2">
 						<h3 className="font-semibold">Current booking</h3>
-						<InterviewStatus state={latest.state} />
+						<InterviewStatus state={current.state} />
 					</div>
-					<ScheduleCard round={latest} title="Current time and location">
-						{latest.meeting.mode === "virtual" && latest.meeting.teamsUrl && (
+					<ScheduleCard round={current} title="Current time and location">
+						{current.meeting.mode === "virtual" && current.meeting.teamsUrl && (
 							<p className="[overflow-wrap:anywhere] text-muted-foreground">
-								{latest.meeting.teamsUrl}
+								{current.meeting.teamsUrl}
 							</p>
 						)}
 					</ScheduleCard>
 					<p>
-						Current panelist: {latest.panelist.name} ({latest.panelist.email})
+						Current panelist: {current.panelist.name} ({current.panelist.email})
 					</p>
+					{current.pendingReviewId && (
+						<Alert variant="warning">
+							<AlertTitle>Pending HR review</AlertTitle>
+						</Alert>
+					)}
 					{actionUnavailable ? (
 						<p>This action is no longer available for the current booking.</p>
 					) : (
@@ -650,7 +925,7 @@ function ManageForm({
 								variant="outline"
 								className="self-start"
 								onClick={() => {
-									setRevision(latest.revision);
+									setRevision(current.revision);
 									clear();
 								}}
 							>
@@ -663,7 +938,10 @@ function ManageForm({
 			{confirmations[action] && (
 				<p className="text-muted-foreground">{confirmations[action]}</p>
 			)}
-			<fieldset disabled={busy} className="flex flex-col gap-5">
+			<fieldset
+				disabled={busy || actionUnavailable}
+				className="flex flex-col gap-5"
+			>
 				{action === "meeting" && (
 					<MeetingFields
 						value={meeting}
@@ -722,7 +1000,9 @@ function ManageForm({
 						</Select>
 					</Field>
 				)}
-				{(action === "no_show" || action === "withdraw") && (
+				{(action === "no_show" ||
+					action === "withdraw" ||
+					action === "cancel_unavailable_panelist") && (
 					<ReasonField value={reason} onChange={setReason} />
 				)}
 			</fieldset>
@@ -735,9 +1015,10 @@ function ManageForm({
 
 export function HrRoundDetail({
 	id,
+	versionId,
 	busy,
 	setBusy,
-}: { id: string } & SheetWriteState) {
+}: { id: string; versionId?: string } & SheetWriteState) {
 	const client = useQueryClient();
 	const request = useQuery(hrBookingQuery(id));
 	const error = request.error ?? undefined;
@@ -779,7 +1060,7 @@ export function HrRoundDetail({
 		return (
 			<InterviewSheetForm
 				title="Booking details"
-				description="L1 interview"
+				description="Interview"
 				footer={null}
 			>
 				{error !== undefined ? (
@@ -854,6 +1135,29 @@ export function HrRoundDetail({
 				)
 			}
 		>
+			{round.pendingReviewId && (
+				<Alert variant="warning">
+					<AlertTitle>
+						{round.reviewAffectsRound
+							? "Pending HR review"
+							: "Candidacy pending HR review"}
+					</AlertTitle>
+					<Link
+						to="/staff/interviews"
+						search={{ tab: "queue", review: round.pendingReviewId }}
+						className="text-sm underline"
+					>
+						Open feedback review
+					</Link>
+				</Alert>
+			)}
+			{round.decision && (
+				<HrScorecard roundId={round.id} versionId={versionId} />
+			)}
+			{round.qualifyingL1RoundId &&
+				(scheduled || active || round.state === "awaiting_feedback") && (
+					<HrScorecard roundId={round.qualifyingL1RoundId} bookingPreview />
+				)}
 			{notice && (
 				<Alert role="status" variant="success">
 					<AlertTitle>{notice}</AlertTitle>
@@ -910,21 +1214,9 @@ export function HrRoundDetail({
 				<h3 className="font-semibold">Meeting</h3>
 				{meeting.mode === "virtual" ? (
 					meeting.teamsUrl ? (
-						<a
-							href={meeting.teamsUrl}
-							target="_blank"
-							rel="noopener noreferrer"
-							className={buttonVariants({
-								variant: "outline",
-								size: "sm",
-								className: "self-start",
-							})}
-						>
-							<Video data-icon="inline-start" />
-							Open Teams meeting
-						</a>
+						<MeetingLink url={meeting.teamsUrl} />
 					) : (
-						<p className="text-muted-foreground">Teams link pending</p>
+						<p className="text-muted-foreground">Meeting link pending</p>
 					)
 				) : (
 					<p className="flex items-start gap-2 [overflow-wrap:anywhere]">

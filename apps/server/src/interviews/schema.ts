@@ -1,15 +1,24 @@
 import {
+	type AssessmentCriteria,
+	type AssessmentDraft,
+	type AssessmentScorecard,
+	type FeedbackResolutionOutcome,
+	feedbackResolutionActionSchema,
+	feedbackReviewKindSchema,
 	type InterviewMeeting,
 	interviewStateSchema,
 	noShowPartySchema,
 } from "@studio/contracts";
 import { sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
+	boolean,
 	check,
 	foreignKey,
 	index,
 	integer,
 	jsonb,
+	type PgTableExtraConfigValue,
 	pgEnum,
 	pgTable,
 	primaryKey,
@@ -36,6 +45,14 @@ export const challengePhase = pgEnum("interview_challenge_phase", [
 	"sent",
 	"failed",
 ]);
+export const feedbackReviewKind = pgEnum(
+	"interview_feedback_review_kind",
+	feedbackReviewKindSchema.enum,
+);
+export const feedbackResolutionAction = pgEnum(
+	"interview_feedback_resolution_action",
+	feedbackResolutionActionSchema.enum,
+);
 
 export const interviewPreference = pgTable(
 	"interview_preference",
@@ -83,10 +100,17 @@ export const interviewRound = pgTable(
 		startedBy: text("started_by").references(() => user.id),
 		startedAt: when("started_at"),
 		closedAt: when("closed_at"),
+		cancelledAt: when("cancelled_at"),
+		cancellationCode: text("cancellation_code").$type<
+			"panelist_unavailable" | "l1_pass_reversed"
+		>(),
+		legacyAssessment: boolean("legacy_assessment").notNull().default(false),
+		qualifyingL1RoundId: uuid("qualifying_l1_round_id"),
+		qualifyingL1VersionId: uuid("qualifying_l1_version_id"),
 		reason: text(),
 		absent: noShowParty(),
 	},
-	(t) => [
+	(t): PgTableExtraConfigValue[] => [
 		foreignKey({
 			name: "interview_round_candidacy_fk",
 			columns: [t.driveId, t.candidateId],
@@ -98,8 +122,30 @@ export const interviewRound = pgTable(
 			t.level,
 			t.attempt,
 		),
+		unique("interview_round_scope").on(t.driveId, t.candidateId, t.id),
+		foreignKey({
+			name: "interview_round_qualifying_l1_candidacy_fk",
+			columns: [t.driveId, t.candidateId, t.qualifyingL1RoundId],
+			foreignColumns: [t.driveId, t.candidateId, t.id] as [
+				AnyPgColumn,
+				AnyPgColumn,
+				AnyPgColumn,
+			],
+		}),
+		foreignKey({
+			name: "interview_round_qualifying_l1_version_fk",
+			columns: [t.qualifyingL1RoundId, t.qualifyingL1VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			] as [AnyPgColumn, AnyPgColumn],
+		}),
+		check(
+			"interview_round_l1_qualification",
+			sql`(${t.qualifyingL1RoundId} is null and ${t.qualifyingL1VersionId} is null) or (${t.level} = 'l2' and ${t.qualifyingL1RoundId} is not null and ${t.qualifyingL1VersionId} is not null)`,
+		),
 		uniqueIndex("interview_round_unresolved")
-			.on(t.driveId, t.candidateId, t.level)
+			.on(t.driveId, t.candidateId)
 			.where(sql`${t.state} in ('scheduled', 'active', 'awaiting_feedback')`),
 		index("interview_round_panelist_time").on(t.panelistId, t.start, t.end),
 		index("interview_round_email_time").on(t.invitedEmail, t.start, t.end),
@@ -108,6 +154,88 @@ export const interviewRound = pgTable(
 			sql`${t.duration} between 5 and 480 and ${t.end} = ${t.start} + ${t.duration} * interval '1 minute'`,
 		),
 		check("interview_round_attempt_positive", sql`${t.attempt} > 0`),
+	],
+);
+
+export const interviewAssessment = pgTable("interview_assessment", {
+	roundId: uuid("round_id")
+		.primaryKey()
+		.references(() => interviewRound.id),
+	criteria: jsonb().$type<AssessmentCriteria>().notNull(),
+	draft: jsonb().$type<AssessmentDraft>().notNull().default({
+		questions: [],
+		notes: "",
+		ratings: [],
+		decision: null,
+		rationale: "",
+	}),
+	draftRevision: integer("draft_revision").notNull().default(0),
+	draftUpdatedAt: when("draft_updated_at"),
+});
+
+export const interviewAssessmentVersion = pgTable(
+	"interview_assessment_version",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		roundId: uuid("round_id")
+			.notNull()
+			.references(() => interviewAssessment.roundId),
+		version: integer().notNull(),
+		previousVersionId: uuid("previous_version_id"),
+		reviewedL1VersionId: uuid("reviewed_l1_version_id").references(
+			(): AnyPgColumn => interviewAssessmentVersion.id,
+		),
+		decision: text().$type<AssessmentScorecard["decision"]>().notNull(),
+		ratings: jsonb().$type<AssessmentScorecard["ratings"]>().notNull(),
+		rationale: text().notNull(),
+		correctionReason: text("correction_reason"),
+		authorId: text("author_id")
+			.notNull()
+			.references(() => user.id),
+		submittedAt: when("submitted_at").notNull(),
+	},
+	(t) => [
+		unique("interview_assessment_version_number").on(t.roundId, t.version),
+		unique("interview_assessment_version_scope").on(t.roundId, t.id),
+		foreignKey({
+			name: "interview_assessment_previous_version_fk",
+			columns: [t.roundId, t.previousVersionId],
+			foreignColumns: [t.roundId, t.id] as [AnyPgColumn, AnyPgColumn],
+		}),
+		check(
+			"interview_assessment_version_chain",
+			sql`(${t.version} = 1 and ${t.previousVersionId} is null and ${t.correctionReason} is null) or (${t.version} > 1 and ${t.previousVersionId} is not null and length(btrim(${t.correctionReason})) > 0 and ${t.correctionReason} is not null)`,
+		),
+	],
+);
+
+export const interviewProgress = pgTable(
+	"interview_progress",
+	{
+		driveId: uuid("drive_id").notNull(),
+		candidateId: uuid("candidate_id").notNull(),
+		l1VersionId: uuid("l1_version_id").references(
+			() => interviewAssessmentVersion.id,
+		),
+		currentL2RoundId: uuid("current_l2_round_id"),
+		revision: integer().notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.driveId, t.candidateId] }),
+		foreignKey({
+			name: "interview_progress_candidacy_fk",
+			columns: [t.driveId, t.candidateId],
+			foreignColumns: [driveCandidate.driveId, driveCandidate.id],
+		}),
+		foreignKey({
+			name: "interview_progress_current_l2_fk",
+			columns: [t.driveId, t.candidateId, t.currentL2RoundId],
+			foreignColumns: [
+				interviewRound.driveId,
+				interviewRound.candidateId,
+				interviewRound.id,
+			],
+		}),
 	],
 );
 
@@ -129,6 +257,111 @@ export const interviewWithdrawal = pgTable(
 			columns: [t.driveId, t.candidateId],
 			foreignColumns: [driveCandidate.driveId, driveCandidate.id],
 		}),
+	],
+);
+
+export const interviewFeedbackReview = pgTable(
+	"interview_feedback_review",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		driveId: uuid("drive_id").notNull(),
+		candidateId: uuid("candidate_id").notNull(),
+		kind: feedbackReviewKind().notNull(),
+		l1RoundId: uuid("l1_round_id").notNull(),
+		previousL1VersionId: uuid("previous_l1_version_id").notNull(),
+		triggerL1VersionId: uuid("trigger_l1_version_id").notNull().unique(),
+		affectedL2RoundId: uuid("affected_l2_round_id").notNull(),
+		affectedL2VersionId: uuid("affected_l2_version_id"),
+		revision: integer().notNull().default(0),
+		createdAt: when("created_at").notNull(),
+		resolvedAt: when("resolved_at"),
+		resolvedBy: text("resolved_by").references(() => user.id),
+		resolutionAction: feedbackResolutionAction("resolution_action"),
+		resolutionOutcome:
+			text("resolution_outcome").$type<FeedbackResolutionOutcome>(),
+		resolutionReason: text("resolution_reason"),
+		appliedL1VersionId: uuid("applied_l1_version_id"),
+		reinstatedL2VersionId: uuid("reinstated_l2_version_id"),
+		readAt: when("read_at"),
+		readBy: text("read_by").references(() => user.id),
+	},
+	(t) => [
+		foreignKey({
+			name: "feedback_review_l1_round_scope_fk",
+			columns: [t.driveId, t.candidateId, t.l1RoundId],
+			foreignColumns: [
+				interviewRound.driveId,
+				interviewRound.candidateId,
+				interviewRound.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_l2_round_scope_fk",
+			columns: [t.driveId, t.candidateId, t.affectedL2RoundId],
+			foreignColumns: [
+				interviewRound.driveId,
+				interviewRound.candidateId,
+				interviewRound.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_previous_l1_fk",
+			columns: [t.l1RoundId, t.previousL1VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_trigger_l1_fk",
+			columns: [t.l1RoundId, t.triggerL1VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_affected_l2_fk",
+			columns: [t.affectedL2RoundId, t.affectedL2VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_applied_l1_fk",
+			columns: [t.l1RoundId, t.appliedL1VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			],
+		}),
+		foreignKey({
+			name: "feedback_review_reinstated_l2_fk",
+			columns: [t.affectedL2RoundId, t.reinstatedL2VersionId],
+			foreignColumns: [
+				interviewAssessmentVersion.roundId,
+				interviewAssessmentVersion.id,
+			],
+		}),
+		uniqueIndex("feedback_review_one_open")
+			.on(t.driveId, t.candidateId)
+			.where(sql`${t.kind} = 'pass_reversed' and ${t.resolvedAt} is null`),
+		index("feedback_review_inbox")
+			.on(t.createdAt, t.id)
+			.where(
+				sql`(${t.kind} = 'pass_reversed' and ${t.resolvedAt} is null) or (${t.kind} = 'handoff_updated' and ${t.readAt} is null)`,
+			),
+		check(
+			"feedback_review_resolution_fields",
+			sql`
+		(${t.resolvedAt} is null and ${t.resolvedBy} is null and ${t.resolutionAction} is null and ${t.resolutionOutcome} is null and ${t.resolutionReason} is null and ${t.appliedL1VersionId} is null and ${t.reinstatedL2VersionId} is null)
+		or (${t.kind} = 'pass_reversed' and ${t.resolvedAt} is not null and ${t.resolvedBy} is not null and ${t.resolutionAction} is not null and ${t.resolutionOutcome} is not null and ${t.resolutionReason} is not null and ${t.appliedL1VersionId} is not null and ((${t.resolutionAction} = 'reinstate_l2') = (${t.reinstatedL2VersionId} is not null)))`,
+		),
+		check(
+			"feedback_review_acknowledgment_fields",
+			sql`(${t.readAt} is null and ${t.readBy} is null) or (${t.kind} = 'handoff_updated' and ${t.readAt} is not null and ${t.readBy} is not null)`,
+		),
 	],
 );
 
@@ -224,6 +457,12 @@ export const interviewEvent = pgTable(
 		action: text().notNull(),
 		revision: integer().notNull(),
 		createdAt: when("created_at").notNull().defaultNow(),
+		assessmentVersionId: uuid("assessment_version_id").references(
+			() => interviewAssessmentVersion.id,
+		),
+		feedbackReviewId: uuid("feedback_review_id").references(
+			() => interviewFeedbackReview.id,
+		),
 	},
 	(t) => [
 		foreignKey({

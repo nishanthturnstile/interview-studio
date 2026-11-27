@@ -19,6 +19,13 @@ export function accessDenied(error: unknown) {
 	);
 }
 
+export function retryInterviewRead(failures: number, error: Error) {
+	return (
+		failures < 1 &&
+		(!(error instanceof InterviewRequestError) || error.status >= 500)
+	);
+}
+
 export async function interviewRequest<T extends z.ZodType>(
 	path: string,
 	schema: T,
@@ -26,6 +33,7 @@ export async function interviewRequest<T extends z.ZodType>(
 		signal?: AbortSignal;
 		data?: unknown;
 		method?: "POST" | "PATCH";
+		cached?: z.output<T> & { revisionTag?: string };
 	} = {},
 ): Promise<z.output<T>> {
 	const response = await fetch(`/api${path}`, {
@@ -39,8 +47,12 @@ export async function interviewRequest<T extends z.ZodType>(
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(options.data),
 				}
-			: {}),
+			: options.cached?.revisionTag
+				? { headers: { "If-None-Match": options.cached.revisionTag } }
+				: {}),
 	});
+	if (response.status === 304 && options.cached?.revisionTag)
+		return options.cached;
 	const json = await response.json().catch(() => null);
 	if (!response.ok)
 		throw new InterviewRequestError(
@@ -66,6 +78,24 @@ const messages: Partial<Record<InterviewError["error"], string>> = {
 		"This slot overlaps another interview. Review the conflicts before continuing.",
 	preferences_changed:
 		"Your scheduling settings changed. Review the current time zone and duration before saving.",
+	skills_need_review:
+		"HR needs to review the drive’s scorecard skills for this round.",
+	skills_changed:
+		"The reviewed skills changed. Check the current criteria before booking.",
+	workflow_changed:
+		"The candidate’s interview progress changed. Review the latest details before trying again.",
+	draft_changed:
+		"A newer draft was saved. Compare it with your changes before saving again.",
+	assessment_incomplete:
+		"Rate every skill, choose a decision, and enter a rationale before submitting.",
+	l1_handoff_changed:
+		"Review and acknowledge the current L1 scorecard before submitting.",
+	pending_feedback_review:
+		"HR must resolve the pending feedback review before this action is available.",
+	feedback_version_changed:
+		"A newer version was submitted. Review it before saving your correction.",
+	feedback_review_changed:
+		"The review changed. Check the latest L1 decision before resolving it.",
 	revision_conflict:
 		"This record changed. Review the latest details before trying again.",
 	idempotency_conflict:
@@ -89,6 +119,8 @@ const messages: Partial<Record<InterviewError["error"], string>> = {
 
 export function interviewMessage(error: unknown) {
 	if (error instanceof InterviewRequestError) {
+		if (error.status === 413)
+			return "The assessment is too large. Shorten your notes or feedback and try again.";
 		const problem = error.problem;
 		if (problem?.error === "too_early" && problem.opensAt) {
 			return `You can join from ${new Date(problem.opensAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} in your local time.`;
@@ -105,7 +137,7 @@ export function useCommandKey() {
 	const previous = useRef<{ fingerprint: string; commandId: string } | null>(
 		null,
 	);
-	return (input: object) => {
+	return <T extends object>(input: T) => {
 		const fingerprint = JSON.stringify(input);
 		if (previous.current?.fingerprint !== fingerprint) {
 			previous.current = { fingerprint, commandId: crypto.randomUUID() };
@@ -208,7 +240,11 @@ export function useInterviewPoll<
 				if (controller.signal.aborted) return;
 				failures = 0;
 				setResult({ path: endpoint, data });
-				if (data.state === "scheduled" || data.state === "active") {
+				if (
+					data.state === "scheduled" ||
+					data.state === "active" ||
+					(!candidate && data.state === "awaiting_feedback")
+				) {
 					timer = window.setTimeout(
 						() => void update(endpoint, candidate && data.confirmed),
 						8_000,

@@ -7,6 +7,8 @@ import {
 	idempotencyKeySchema,
 	jobDescriptionLimit,
 	jobDescriptionSaveSchema,
+	maxDriveFieldNameLength,
+	maxRoundSkills,
 	reviewActionSchema,
 	reviewQueueStatusSchema,
 	roundSchema,
@@ -67,6 +69,11 @@ const boundedJson = bodyLimit({
 });
 const boundedDescription = bodyLimit({
 	maxSize: jobDescriptionLimit * 6 + 1024,
+	onError: (c) => c.json({ error: "invalid_input", field: "body" }, 413),
+});
+const boundedSkills = bodyLimit({
+	// A JSON-escaped code unit takes six bytes. Allow for each UUID and the wrapper.
+	maxSize: maxRoundSkills * (maxDriveFieldNameLength * 6 + 64) + 1024,
 	onError: (c) => c.json({ error: "invalid_input", field: "body" }, 413),
 });
 
@@ -419,7 +426,7 @@ export function driveRoutes(database: Database, boss: PgBoss) {
 				),
 			),
 	);
-	routes.put("/:driveId/skills/:round", boundedJson, async (c) =>
+	routes.put("/:driveId/skills/:round", boundedSkills, async (c) =>
 		c.json(
 			await changeSkills(
 				database,

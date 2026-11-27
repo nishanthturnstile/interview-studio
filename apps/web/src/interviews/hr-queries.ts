@@ -1,22 +1,37 @@
 import {
+	eligibleInterviewCandidateSchema,
+	hrInterviewDashboardSchema,
 	hrInterviewSchema,
-	type InterviewListQuery,
-	interviewListSchema,
+	type InterviewWorkspaceQuery,
+	interviewTimelineSchema,
+	interviewWorkspaceSchema,
 } from "@studio/contracts";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
-import { accessDenied, InterviewRequestError, interviewRequest } from "./api";
+import { accessDenied, interviewRequest, retryInterviewRead } from "./api";
 
 const listKey = ["hr-interviews", "list"] as const;
+const eligibilityKey = ["hr-interviews", "eligibility"] as const;
+export const feedbackReviewKey = ["hr-interviews", "feedback-reviews"] as const;
 const listFreshness = 30_000;
 
-function retry(failures: number, error: Error) {
-	return (
-		failures < 1 &&
-		(!(error instanceof InterviewRequestError) || error.status >= 500)
-	);
+export function hrDashboardQuery() {
+	return queryOptions({
+		queryKey: [...listKey, "dashboard"],
+		queryFn: ({ signal }) =>
+			interviewRequest(
+				"/staff/interviews/dashboard",
+				hrInterviewDashboardSchema,
+				{ signal },
+			),
+		staleTime: listFreshness,
+		refetchOnWindowFocus: "always",
+		refetchInterval: ({ state }) =>
+			accessDenied(state.error) ? false : listFreshness,
+		retry: retryInterviewRead,
+	});
 }
 
-export function hrInterviewsQuery(filters: InterviewListQuery) {
+export function hrInterviewsQuery(filters: InterviewWorkspaceQuery) {
 	return queryOptions({
 		queryKey: [...listKey, filters],
 		queryFn: ({ signal }) => {
@@ -25,15 +40,34 @@ export function hrInterviewsQuery(filters: InterviewListQuery) {
 				if (value !== undefined && value !== "") query.set(key, String(value));
 			}
 			return interviewRequest(
-				`/staff/interviews?${query}`,
-				interviewListSchema,
+				`/staff/interviews/workspace?${query}`,
+				interviewWorkspaceSchema,
 				{ signal },
 			);
 		},
 		staleTime: listFreshness,
+		refetchOnWindowFocus: "always",
 		refetchInterval: ({ state }) =>
 			accessDenied(state.error) ? false : listFreshness,
-		retry,
+		retry: retryInterviewRead,
+	});
+}
+
+export function hrTimelineQuery(
+	driveId: string,
+	candidateId: string,
+	page: number,
+) {
+	return queryOptions({
+		queryKey: [...listKey, "timeline", driveId, candidateId, page],
+		queryFn: ({ signal }) =>
+			interviewRequest(
+				`/staff/interviews/candidacies/${driveId}/${candidateId}/timeline?page=${page}`,
+				interviewTimelineSchema,
+				{ signal },
+			),
+		retry: retryInterviewRead,
+		refetchOnWindowFocus: "always",
 	});
 }
 
@@ -45,12 +79,24 @@ export function hrBookingQuery(id: string) {
 				signal,
 			}),
 		staleTime: 8_000,
-		refetchInterval: ({ state }) =>
-			!accessDenied(state.error) &&
-			(state.data?.state === "scheduled" || state.data?.state === "active")
-				? 8_000
-				: false,
-		retry,
+		refetchOnWindowFocus: "always",
+		refetchInterval: ({ state }) => (accessDenied(state.error) ? false : 8_000),
+		retry: retryInterviewRead,
+	});
+}
+
+export function bookingEligibilityQuery(driveId: string, candidateId: string) {
+	return queryOptions({
+		queryKey: [...eligibilityKey, driveId, candidateId],
+		queryFn: ({ signal }) =>
+			interviewRequest(
+				`/staff/interviews/candidacies/${driveId}/${candidateId}/eligibility`,
+				eligibleInterviewCandidateSchema,
+				{ signal },
+			),
+		refetchOnWindowFocus: "always",
+		refetchInterval: ({ state }) => (accessDenied(state.error) ? false : 8_000),
+		retry: retryInterviewRead,
 	});
 }
 
@@ -59,14 +105,31 @@ export async function invalidateHrInterviews(
 	bookingId?: string,
 ) {
 	const list = { queryKey: listKey };
-	const detail = bookingId && { queryKey: hrBookingQuery(bookingId).queryKey };
+	const eligibility = { queryKey: eligibilityKey };
+	const reviews = { queryKey: feedbackReviewKey };
+	const booking = {
+		queryKey: bookingId
+			? hrBookingQuery(bookingId).queryKey
+			: ["hr-interviews", "booking"],
+	};
+	const assessment = {
+		queryKey: bookingId
+			? ["hr-interviews", "assessment", bookingId]
+			: ["hr-interviews", "assessment"],
+	};
 	// An in-flight read may have started before the write committed.
 	await Promise.all([
 		client.cancelQueries(list),
-		detail && client.cancelQueries(detail),
+		client.cancelQueries(eligibility),
+		client.cancelQueries(reviews),
+		client.cancelQueries(booking),
+		client.cancelQueries(assessment),
 	]);
 	await Promise.all([
 		client.invalidateQueries(list),
-		detail && client.invalidateQueries(detail),
+		client.invalidateQueries(eligibility),
+		client.invalidateQueries(reviews),
+		client.invalidateQueries(booking),
+		client.invalidateQueries(assessment),
 	]);
 }

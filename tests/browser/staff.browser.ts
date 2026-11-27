@@ -151,7 +151,15 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 			.click();
 		await expect(director.getByRole("status")).toContainText("Email verified");
 		await signin(director, directorEmail);
-		await expect(director.getByText("Director", { exact: true })).toBeVisible();
+		await expect(
+			director.getByRole("heading", { name: "Director dashboard" }),
+		).toBeVisible();
+		await expect(
+			director.getByRole("region", { name: "Drive progress" }),
+		).toBeVisible();
+		expect(
+			(await director.request.get("/api/staff/reports/interviews")).status(),
+		).toBe(200);
 		expect((await director.request.get("/api/staff/interviews")).status()).toBe(
 			403,
 		);
@@ -184,7 +192,17 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 			.click();
 		await expect(panelist.getByRole("status")).toContainText("Email verified");
 		await signin(panelist, panelistEmail);
-		await expect(panelist.getByText("Panelist", { exact: true })).toBeVisible();
+		await expect(
+			panelist.getByRole("heading", { name: "Panelist dashboard" }),
+		).toBeVisible();
+		await expect(
+			panelist.getByRole("region", { name: "Needs your attention" }),
+		).toContainText("You’re caught up on interviews and feedback.");
+		expect(
+			(
+				await director.request.get("/api/staff/my-interviews/dashboard")
+			).status(),
+		).toBe(403);
 		await expect(panelist.getByRole("link", { name: "Drives" })).toHaveCount(0);
 		await panelist.goto("/staff/drives");
 		await expect(panelist).toHaveURL(/\/staff\/?$/);
@@ -231,7 +249,28 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 			await dialog.getByRole("button", { name: "Grant access" }).click();
 			await expect(row.getByText(role, { exact: true })).toBeVisible();
 			await panelist.reload();
-			await expect(panelist.getByText(role, { exact: true })).toBeVisible();
+			const actions = panelist.getByRole("region", { name: "Action needed" });
+			if (role === "HR") {
+				await expect(actions).toBeVisible();
+			} else {
+				await expect(
+					panelist.getByRole("heading", { name: "Director dashboard" }),
+				).toBeVisible();
+				await expect(actions).toHaveCount(0);
+			}
+			expect(
+				(
+					await panelist.request.get("/api/staff/interviews/workspace")
+				).status(),
+			).toBe(role === "HR" ? 200 : 403);
+			expect(
+				(
+					await panelist.request.get("/api/staff/my-interviews/dashboard")
+				).status(),
+			).toBe(403);
+			expect(
+				(await panelist.request.get("/api/staff/reports/interviews")).status(),
+			).toBe(role === "Director" ? 200 : 403);
 			const drives = panelist.getByRole("link", { name: "Drives" });
 			await drives.click();
 			await expect(
@@ -267,12 +306,14 @@ test("verifies staff, grants roles, and resets a password through Mailpit", asyn
 		await expect(
 			panelist.getByRole("heading", { name: "Staff sign in" }),
 		).toBeVisible();
-		await signin(panelist, panelistEmail);
+		await signinWhenAvailable(panelist, panelistEmail, password, 401);
 		await expect(panelist.getByRole("alert")).toContainText(
 			"email or password is incorrect",
 		);
 		await signinWhenAvailable(panelist, panelistEmail, newPassword);
-		await expect(panelist.getByText("Director", { exact: true })).toBeVisible();
+		await expect(
+			panelist.getByRole("heading", { name: "Director dashboard" }),
+		).toBeVisible();
 		await director.goto(reset);
 		await expect(director.getByRole("alert")).toContainText(
 			"invalid, expired, or already used",
@@ -312,6 +353,7 @@ async function signinWhenAvailable(
 	page: Page,
 	address: string,
 	secret = password,
+	expectedStatus = 200,
 ) {
 	await expect
 		.poll(
@@ -325,7 +367,7 @@ async function signinWhenAvailable(
 			},
 			{ intervals: [11_000], timeout: 25_000 },
 		)
-		.toBe(200);
+		.toBe(expectedStatus);
 }
 
 async function verifyAndSignIn(page: Page, name: string, address: string) {
@@ -345,7 +387,7 @@ async function verifyAndSignIn(page: Page, name: string, address: string) {
 test("prepares a drive with original files, independent candidate review, and read-only director access", async ({
 	browser,
 	baseURL,
-}) => {
+}, info) => {
 	test.setTimeout(process.env.STUDIO_TEST_COMPOSE_PROJECT ? 180_000 : 90_000);
 	const contexts = await Promise.all(
 		Array.from({ length: 3 }, () => browser.newContext({ baseURL })),
@@ -892,8 +934,137 @@ test("prepares a drive with original files, independent candidate review, and re
 		expect(JSON.stringify(overview)).not.toMatch(
 			/fixture@example|\.pdf|objectKey|extractedText|candidateId/,
 		);
+		await test.step("filters the Director report and keeps it readable on mobile", async () => {
+			await director.goto("/staff");
+			await director
+				.getByRole("combobox", { name: "Drive", exact: true })
+				.click();
+			await director.getByRole("option", { name, exact: true }).click();
+			const results = director.getByRole("region", {
+				name: "Candidate results",
+			});
+			await expect(results).toContainText("2 candidacies");
+			await expect(
+				results.getByText("In progress", { exact: true }),
+			).toHaveCount(2);
+			await expect(
+				results.getByRole("button", { name: /View scorecards/ }),
+			).toHaveCount(0);
+			expect(
+				await director.evaluate(() => document.documentElement.scrollWidth),
+			).toBe(360);
+			await director
+				.getByRole("combobox", { name: "Outcome", exact: true })
+				.click();
+			await director
+				.getByRole("option", { name: "Selected", exact: true })
+				.click();
+			await expect(results).toContainText(
+				"No candidacies match these filters.",
+			);
+			await director.getByRole("button", { name: "Clear filters" }).click();
+			await expect(
+				director.getByRole("combobox", { name: "Drive", exact: true }),
+			).toContainText("All drives");
+			await expect(
+				results.getByText("In progress", { exact: true }).first(),
+			).toBeVisible();
+			const reportApi = "/api/staff/reports/interviews";
+			expect(
+				(
+					await director.request.get(
+						`${reportApi}?from=2026-12-02&to=2026-12-01`,
+					)
+				).status(),
+			).toBe(400);
+			expect((await hr.request.get(reportApi)).status()).toBe(403);
+			expect((await panelist.request.get(reportApi)).status()).toBe(403);
+			if (process.env.STUDIO_TEST_INTERVIEW_SCREENSHOTS)
+				await director.screenshot({
+					path: info.outputPath("director-dashboard-mobile.png"),
+					animations: "disabled",
+				});
+			const all = await (await director.request.get(reportApi)).json();
+			const release = Promise.withResolvers<void>();
+			await director.route(`**${reportApi}?*`, async (route) => {
+				const page = Number(
+					new URL(route.request().url()).searchParams.get("page"),
+				);
+				if (page === 2) await release.promise;
+				await route.fulfill({
+					json: {
+						...all,
+						page,
+						totals: { ...all.totals, in_progress: 16 },
+					},
+				});
+			});
+			try {
+				await director.reload();
+				const next = results.getByRole("button", { name: "Next", exact: true });
+				await next.press("Enter");
+				await expect(next).toBeFocused();
+				await expect(next).toHaveAttribute("aria-disabled", "true");
+				release.resolve();
+				await expect(
+					results.getByText("Page 2", { exact: true }),
+				).toBeVisible();
+				await expect(next).toBeFocused();
+			} finally {
+				release.resolve();
+				await director.unroute(`**${reportApi}?*`);
+			}
+		});
 		const pagination = await director.request.get(`${root}?limit=1`);
 		expect(pagination.status()).toBe(200);
+		await test.step("withdraws without reviewed skills and recovers a lost response", async () => {
+			const candidate = "Synthetic Manual";
+			const queueUrl = `/staff/interviews?driveId=${driveId}&search=${encodeURIComponent(candidate)}`;
+			await hr.goto(queueUrl);
+			await hr.route(
+				`**${api}`,
+				async (route) => {
+					await new Promise((resolve) => setTimeout(resolve, 350));
+					await route.continue();
+				},
+				{ times: 1 },
+			);
+			await hr.getByRole("link", { name: "Review skills" }).click();
+			const skills = hr.getByRole("heading", { name: "Scorecard skills" });
+			await expect(skills).toBeFocused();
+			await expect(skills).toBeInViewport();
+			await hr.goto(queueUrl);
+			await hr
+				.getByRole("button", { name: `Withdraw candidacy for ${candidate}` })
+				.click();
+			const modal = hr.getByRole("dialog", { name: "Withdraw candidacy" });
+			await modal.getByLabel("Reason").fill("Candidate requested withdrawal.");
+			let firstCommand: unknown;
+			await hr.route(
+				"**/api/staff/interviews/candidacies/*/*/withdraw",
+				async (route) => {
+					firstCommand = route.request().postDataJSON();
+					expect((await route.fetch()).status()).toBe(200);
+					await route.abort("failed");
+				},
+				{ times: 1 },
+			);
+			const noLongerEligible = hr.waitForResponse(
+				(response) =>
+					response.url().includes("/eligibility") && response.status() === 409,
+			);
+			await modal.getByRole("button", { name: "Withdraw candidate" }).click();
+			await noLongerEligible;
+			const replay = hr.waitForRequest(
+				(request) =>
+					request.method() === "POST" && request.url().endsWith("/withdraw"),
+			);
+			await modal.getByRole("button", { name: "Retry withdrawal" }).click();
+			expect((await replay).postDataJSON()).toEqual(firstCommand);
+			await expect(
+				hr.getByText("Candidate withdrawn.", { exact: true }),
+			).toBeVisible();
+		});
 		await expect(panelist.getByRole("link", { name: "Drives" })).toHaveCount(0);
 		const panelistFetches: string[] = [];
 		panelist.on("request", (request) => {

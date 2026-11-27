@@ -4,11 +4,13 @@ import {
 	driveOverviewSchema,
 	type SkillSet,
 } from "@studio/contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	getRouteApi,
 	Link,
 	Navigate,
 	useBlocker,
+	useLocation,
 } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,6 +24,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { invalidateHrInterviews } from "../interviews/hr-queries";
 import { requestMessage, useDriveRequest } from "./api";
 import { Intake } from "./intake";
 import { Skills } from "./skills";
@@ -35,8 +38,17 @@ const metrics = [
 
 function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 	const request = useDriveRequest();
+	const client = useQueryClient();
 	const [overview, setOverview] = useState<DriveOverview>();
 	const [error, setError] = useState("");
+	const fragment = useLocation({ select: (location) => location.hash });
+	const skillsHeading = useRef<HTMLHeadingElement>(null);
+	const loaded = Boolean(overview);
+	useEffect(() => {
+		if (fragment !== "scorecard-skills" || !loaded) return;
+		skillsHeading.current?.focus({ preventScroll: true });
+		skillsHeading.current?.scrollIntoView({ block: "start" });
+	}, [fragment, loaded]);
 	const dirty = useRef(new Set<string>());
 	const onDirty = useCallback((key: string, value: boolean) => {
 		if (value) dirty.current.add(key);
@@ -83,17 +95,21 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 		void load();
 	}, [load]);
 
-	const saveSkills = useCallback((set: SkillSet) => {
-		setOverview(
-			(current) =>
-				current && {
-					...current,
-					skills: current.skills.map((round) =>
-						round.round === set.round ? set : round,
-					),
-				},
-		);
-	}, []);
+	const saveSkills = useCallback(
+		(set: SkillSet) => {
+			setOverview(
+				(current) =>
+					current && {
+						...current,
+						skills: current.skills.map((round) =>
+							round.round === set.round ? set : round,
+						),
+					},
+			);
+			void invalidateHrInterviews(client);
+		},
+		[client],
+	);
 
 	return (
 		<section className="@container/drive mx-auto flex w-full min-w-0 max-w-[90rem] flex-col gap-6 px-4 py-4 sm:gap-7 sm:px-7 sm:py-6 xl:px-9">
@@ -155,6 +171,8 @@ function DriveDetail({ driveId, hr }: { driveId: string; hr: boolean }) {
 					>
 						<h2
 							id="scorecard-skills"
+							ref={skillsHeading}
+							tabIndex={-1}
 							className="scroll-mt-6 text-xl font-semibold"
 						>
 							Scorecard skills

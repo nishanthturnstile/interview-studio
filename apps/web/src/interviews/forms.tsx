@@ -375,7 +375,9 @@ export function MeetingFields({
 			)}
 			{value.mode === "virtual" ? (
 				<Field>
-					<FieldLabel htmlFor={`${id}-teams`}>Teams URL (optional)</FieldLabel>
+					<FieldLabel htmlFor={`${id}-teams`}>
+						Meeting URL (optional)
+					</FieldLabel>
 					<Input
 						id={`${id}-teams`}
 						type="url"
@@ -390,7 +392,7 @@ export function MeetingFields({
 						}
 					/>
 					<FieldDescription>
-						You can add the Teams URL after booking.
+						You can add the meeting URL after booking.
 					</FieldDescription>
 				</Field>
 			) : (

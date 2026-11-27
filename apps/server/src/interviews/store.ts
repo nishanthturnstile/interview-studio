@@ -141,11 +141,14 @@ export async function readPreferences(
 
 export function savePreferences(
 	database: Database,
+	config: InterviewConfig,
 	staffId: string,
 	input: InterviewPreferences,
 ) {
 	const timeZone = validateTimeZone(input.timeZone);
 	return database.transaction(async (tx) => {
+		if ((await lockStaff(tx, staffId, config.domains))?.role !== "hr")
+			throw new InterviewProblem(403, "forbidden");
 		await lock(tx, `interview:preferences:${staffId}`);
 		const current = await readPreferences(tx, staffId);
 		if (current.revision !== input.revision) {
@@ -265,6 +268,7 @@ export async function recordEvent(
 	action: string,
 	revision: number,
 	roundId?: string,
+	references: { assessmentVersionId?: string; feedbackReviewId?: string } = {},
 ) {
 	await tx.insert(interviewEvent).values({
 		...actor,
@@ -273,5 +277,6 @@ export async function recordEvent(
 		roundId,
 		action,
 		revision,
+		...references,
 	});
 }

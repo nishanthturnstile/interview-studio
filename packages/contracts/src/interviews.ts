@@ -1,9 +1,15 @@
 import { z } from "zod";
 import {
+	assessmentDecisionSchema,
+	assessmentViewSchema,
+} from "./assessments.ts";
+import {
 	candidateEmailSchema,
 	candidateFieldsSchema,
 	roundSchema,
+	skillSetSchema,
 } from "./drives.ts";
+import { feedbackReviewDetailSchema } from "./feedback-reviews.ts";
 import type { StaffRole } from "./staff.ts";
 
 export const canManageInterviews = (role: StaffRole) => role === "hr";
@@ -74,6 +80,8 @@ export const bookInterviewSchema = z.object({
 	driveId: z.uuid(),
 	candidateId: z.uuid(),
 	candidateRevision: revision,
+	workflowRevision: revision,
+	skillRevision: revision,
 	panelistId: z.string().min(1).max(128),
 	level: roundSchema,
 	preferenceRevision: revision,
@@ -85,6 +93,7 @@ export const interviewStateSchema = z.enum([
 	"scheduled",
 	"active",
 	"awaiting_feedback",
+	"feedback_submitted",
 	"cancelled",
 	"no_show",
 	"withdrawn",
@@ -104,6 +113,11 @@ export const interviewCommandSchema = z.discriminatedUnion("action", [
 	z.object({ ...change, action: z.literal("cancel") }),
 	z.object({
 		...change,
+		action: z.literal("cancel_unavailable_panelist"),
+		reason,
+	}),
+	z.object({
+		...change,
 		action: z.literal("no_show"),
 		absent: noShowPartySchema,
 		reason,
@@ -113,7 +127,11 @@ export const interviewCommandSchema = z.discriminatedUnion("action", [
 	z.object({ ...change, action: z.literal("end") }),
 ]);
 export type InterviewCommand = z.infer<typeof interviewCommandSchema>;
-export const withdrawCandidacySchema = z.object({ ...change, reason });
+export const withdrawCandidacySchema = z.object({
+	...change,
+	workflowRevision: revision,
+	reason,
+});
 
 const experienceParam = z.coerce.number().min(0).max(80).multipleOf(0.1);
 export const interviewPageNumberSchema = z.coerce
@@ -121,22 +139,37 @@ export const interviewPageNumberSchema = z.coerce
 	.int()
 	.min(1)
 	.max(10_000);
+const interviewFilters = {
+	search: z.string().trim().max(120).default(""),
+	driveId: z.uuid().optional(),
+	level: roundSchema.optional(),
+	minYears: experienceParam.optional(),
+	maxYears: experienceParam.optional(),
+	page: interviewPageNumberSchema.default(1),
+};
+function validExperience(value: { minYears?: number; maxYears?: number }) {
+	return (
+		value.minYears === undefined ||
+		value.maxYears === undefined ||
+		value.minYears <= value.maxYears
+	);
+}
 export const interviewListQuerySchema = z
 	.object({
+		...interviewFilters,
 		tab: z.enum(["queue", "scheduled", "history"]).default("queue"),
-		search: z.string().trim().max(120).default(""),
-		driveId: z.uuid().optional(),
-		minYears: experienceParam.optional(),
-		maxYears: experienceParam.optional(),
-		page: interviewPageNumberSchema.default(1),
 	})
-	.refine(
-		(value) =>
-			value.minYears === undefined ||
-			value.maxYears === undefined ||
-			value.minYears <= value.maxYears,
-	);
+	.refine(validExperience);
 export type InterviewListQuery = z.infer<typeof interviewListQuerySchema>;
+export const interviewWorkspaceQuerySchema = z
+	.object({
+		...interviewFilters,
+		tab: z.enum(["queue", "scheduled", "awaiting", "history"]).default("queue"),
+	})
+	.refine(validExperience);
+export type InterviewWorkspaceQuery = z.infer<
+	typeof interviewWorkspaceQuerySchema
+>;
 
 const driveSummary = z.object({ id: z.uuid(), title: z.string() });
 export const interviewPanelistSchema = z.object({
@@ -146,13 +179,20 @@ export const interviewPanelistSchema = z.object({
 });
 export const interviewPanelistsSchema = z.array(interviewPanelistSchema);
 export type InterviewPanelist = z.infer<typeof interviewPanelistSchema>;
-export const eligibleInterviewCandidateSchema = z.object({
+const interviewCandidate = z.object({
 	id: z.uuid(),
 	drive: driveSummary,
 	name,
 	email: candidateEmailSchema,
 	years,
 	revision,
+});
+export const eligibleInterviewCandidateSchema = interviewCandidate.extend({
+	level: roundSchema,
+	lastAttempt: z.number().int().min(0),
+	workflowRevision: revision,
+	criteria: skillSetSchema,
+	qualifyingL1RoundId: z.uuid().nullable(),
 });
 export type EligibleInterviewCandidate = z.infer<
 	typeof eligibleInterviewCandidateSchema
@@ -201,10 +241,53 @@ export const assignedInterviewsSchema = z.object({
 });
 export type AssignedInterview = z.infer<typeof assignedInterviewSchema>;
 
+export const panelistRoundGroupSchema = z.enum([
+	"attention",
+	"upcoming",
+	"submitted",
+]);
+export type PanelistRoundGroup = z.infer<typeof panelistRoundGroupSchema>;
+
+const panelistDashboardRoundSchema = assignedInterviewSchema
+	.pick({
+		id: true,
+		level: true,
+		attempt: true,
+		state: true,
+		start: true,
+		end: true,
+		timeZone: true,
+		candidate: true,
+		drive: true,
+		closedAt: true,
+	})
+	.extend({ connected: z.boolean(), submittedAt: instant.nullable() });
+export type PanelistDashboardRound = z.infer<
+	typeof panelistDashboardRoundSchema
+>;
+
+const panelistDashboardGroupSchema = z.object({
+	total: z.number().int().nonnegative(),
+	items: z.array(panelistDashboardRoundSchema),
+});
+export const panelistDashboardSchema = z.record(
+	panelistRoundGroupSchema,
+	panelistDashboardGroupSchema,
+);
+
 export const hrInterviewSchema = assignedInterviewSchema.extend({
+	qualifyingL1RoundId: z.uuid().nullable().optional(),
 	panelist: interviewPanelistSchema,
 	canMarkNoShow: z.boolean(),
-	candidate: eligibleInterviewCandidateSchema.omit({
+	canCancelUnavailablePanelist: z.boolean(),
+	decision: assessmentDecisionSchema.nullable(),
+	effectiveOutcome: z
+		.enum(["withdrawn", "do_not_proceed", "selected", "not_selected"])
+		.nullable(),
+	pendingReviewId: z.uuid().nullable(),
+	reviewAffectsRound: z.boolean(),
+	superseded: z.boolean(),
+	candidate: interviewCandidate.omit({
 		drive: true,
 		revision: true,
 	}),
@@ -232,6 +315,51 @@ export const interviewListSchema = z.discriminatedUnion("tab", [
 		items: z.array(hrInterviewSchema),
 	}),
 ]);
+export const interviewWorkspaceSchema = z.object({
+	...pagination,
+	tab: interviewWorkspaceQuerySchema.shape.tab,
+	total: z.number(),
+	actionTotal: z.number(),
+	items: z.array(
+		z.object({
+			id: z.uuid(),
+			drive: driveSummary,
+			name,
+			email: z.string().nullable(),
+			years,
+			level: roundSchema.nullable(),
+			// This identifier follows the candidacy's effective L1 scorecard.
+			l1RoundId: z.uuid().nullable(),
+			hasAttempts: z.boolean(),
+			action: z
+				.enum([
+					"schedule",
+					"review_skills",
+					"review_feedback",
+					"replace_panelist",
+					"review_attendance",
+				])
+				.nullable(),
+			reviewId: z.uuid().nullable(),
+			outcome: hrInterviewSchema.shape.effectiveOutcome,
+			round: hrInterviewSchema.nullable(),
+			eligible: eligibleInterviewCandidateSchema.nullable(),
+		}),
+	),
+});
+export type InterviewWorkspaceItem = z.infer<
+	typeof interviewWorkspaceSchema
+>["items"][number];
+export const hrInterviewDashboardSchema = z.record(
+	interviewWorkspaceQuerySchema.shape.tab,
+	interviewWorkspaceSchema.pick({ total: true, items: true }),
+);
+export const interviewTimelineSchema = z.object({
+	page: z.number(),
+	hasNext: z.boolean(),
+	withdrawal: z.object({ reason: z.string(), at: instant }).nullable(),
+	items: z.array(hrInterviewSchema),
+});
 export const interviewResultSchema = z.object({ id: z.uuid() });
 export const interviewInvitationSchema = z.object({
 	link: z.url(),
@@ -281,6 +409,15 @@ export const interviewErrorSchema = z.object({
 		"panelist_ineligible",
 		"slot_conflict",
 		"preferences_changed",
+		"skills_need_review",
+		"skills_changed",
+		"workflow_changed",
+		"draft_changed",
+		"assessment_incomplete",
+		"l1_handoff_changed",
+		"pending_feedback_review",
+		"feedback_version_changed",
+		"feedback_review_changed",
 		"revision_conflict",
 		"idempotency_conflict",
 		"invalid_transition",
@@ -299,6 +436,10 @@ export const interviewErrorSchema = z.object({
 	]),
 	field: z.string().optional(),
 	preferences: interviewPreferencesSchema.optional(),
+	criteria: skillSetSchema.optional(),
+	assessment: assessmentViewSchema.optional(),
+	review: feedbackReviewDetailSchema.optional(),
+	workflowRevision: revision.optional(),
 	candidacy: interviewCandidacySnapshotSchema.optional(),
 	round: z
 		.union([

@@ -1,3 +1,4 @@
+import { Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -33,7 +34,10 @@ export function EndInterviewDialog({
 				if (!pending) setOpen(value);
 			}}
 		>
-			<DialogTrigger render={<Button variant="outline" />}>
+			<DialogTrigger
+				render={<Button variant={candidate ? "outline" : "destructive"} />}
+			>
+				{!candidate && <Square aria-hidden="true" />}
 				End interview
 			</DialogTrigger>
 			<DialogContent showCloseButton={false}>

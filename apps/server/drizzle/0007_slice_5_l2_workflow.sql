@@ -1,0 +1,10 @@
+ALTER TABLE "interview_assessment_version" ADD COLUMN "reviewed_l1_version_id" uuid;--> statement-breakpoint
+ALTER TABLE "interview_progress" ADD COLUMN "current_l2_round_id" uuid;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD COLUMN "qualifying_l1_round_id" uuid;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD COLUMN "qualifying_l1_version_id" uuid;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD CONSTRAINT "interview_round_scope" UNIQUE("drive_id","candidate_id","id");--> statement-breakpoint
+ALTER TABLE "interview_assessment_version" ADD CONSTRAINT "interview_assessment_version_reviewed_l1_version_id_interview_assessment_version_id_fk" FOREIGN KEY ("reviewed_l1_version_id") REFERENCES "public"."interview_assessment_version"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "interview_progress" ADD CONSTRAINT "interview_progress_current_l2_fk" FOREIGN KEY ("drive_id","candidate_id","current_l2_round_id") REFERENCES "public"."interview_round"("drive_id","candidate_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD CONSTRAINT "interview_round_qualifying_l1_candidacy_fk" FOREIGN KEY ("drive_id","candidate_id","qualifying_l1_round_id") REFERENCES "public"."interview_round"("drive_id","candidate_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD CONSTRAINT "interview_round_qualifying_l1_version_fk" FOREIGN KEY ("qualifying_l1_round_id","qualifying_l1_version_id") REFERENCES "public"."interview_assessment_version"("round_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "interview_round" ADD CONSTRAINT "interview_round_l1_qualification" CHECK (("interview_round"."qualifying_l1_round_id" is null and "interview_round"."qualifying_l1_version_id" is null) or ("interview_round"."level" = 'l2' and "interview_round"."qualifying_l1_round_id" is not null and "interview_round"."qualifying_l1_version_id" is not null));

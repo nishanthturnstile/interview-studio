@@ -73,8 +73,11 @@ export function resolveSlot(slot: InterviewSlot, timeZone: string) {
 	return { start, end, timeZone, duration: slot.duration, offsets };
 }
 
+export const entryLeadMs = 600_000;
+export const presenceTtlMs = 30_000;
+
 export const entryOpensAt = (start: Date) =>
-	new Date(start.getTime() - 600_000);
+	new Date(start.getTime() - entryLeadMs);
 
 export function requireEntryWindow(
 	round: { start: Date; end: Date },
@@ -89,4 +92,4 @@ export function requireEntryWindow(
 }
 
 export const presenceFresh = (lastSeen: Date | null | undefined, now: Date) =>
-	lastSeen != null && now.getTime() - lastSeen.getTime() <= 30_000;
+	lastSeen != null && now.getTime() - lastSeen.getTime() <= presenceTtlMs;
